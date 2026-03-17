@@ -88,6 +88,27 @@ function getStageStatus(stage) {
   return { color: '#3f3f46', label: stage.status || 'Pending', bg: 'var(--bg-tertiary)' }
 }
 
+// Mock data fallback for the 15 demo candidates used on the Candidates list page.
+// The list uses integer IDs ('1'-'15') which don't exist in the DB (which uses UUIDs),
+// so CandidateDetail falls back to this data instead of showing "Candidate not found".
+const MOCK_DETAILS = {
+  '1':  { id:'1', name:'Marcus Johnson',   email:'marcus@email.com',    phone:'+1 415 555 0181', location:'San Francisco, CA', current_title:'Senior Backend Engineer',  applied_for:'Senior Backend Engineer',  stage:'shortlisted', source:'linkedin',    composite_score:87, cv_score:89, phone_screen_score:84, assessment_score:85, interview_score:88, skills:['Node.js','PostgreSQL','AWS','Redis','Docker'],        created_at:'2026-03-15', summary:'Marcus is a strong backend engineer with 7 years of experience in distributed systems. Excellent technical depth and communication. Jury consensus: strong hire.' },
+  '2':  { id:'2', name:'Sarah Chen',        email:'sarah@email.com',     phone:'+1 650 555 0192', location:'New York, NY',       current_title:'Senior Product Designer',  applied_for:'Product Designer',         stage:'interview',   source:'indeed',      composite_score:79, cv_score:82, phone_screen_score:76, assessment_score:78, interview_score:80, skills:['Figma','UX Research','Prototyping','Design Systems','User Testing'], created_at:'2026-03-14', summary:'Sarah brings strong design thinking and a portfolio of high-impact product work. Good cultural fit. Jury recommends proceeding to final round.' },
+  '3':  { id:'3', name:'Ahmed Al-Rashid',   email:'ahmed@email.com',     phone:'+1 312 555 0103', location:'Chicago, IL',        current_title:'Backend Engineer',         applied_for:'Senior Backend Engineer',  stage:'screening',   source:'direct',      composite_score:72, cv_score:70, phone_screen_score:73, assessment_score:71, interview_score:74, skills:['Python','Django','Redis','Celery','PostgreSQL'],      created_at:'2026-03-13', summary:'Ahmed has solid Python/Django experience. Some gaps in system design at scale. Borderline decision — jury split 2-1 in favour of proceeding.' },
+  '4':  { id:'4', name:'Priya Patel',       email:'priya@email.com',     phone:'+1 206 555 0144', location:'Seattle, WA',        current_title:'Data Scientist',           applied_for:'Data Scientist',           stage:'applied',     source:'linkedin',    composite_score:68, cv_score:67, phone_screen_score:66, assessment_score:70, interview_score:null, skills:['Python','ML','TensorFlow','Scikit-learn','SQL'],      created_at:'2026-03-12', summary:'Priya has good fundamentals in ML but limited production deployment experience. Assessment not yet completed. Worth a phone screen.' },
+  '5':  { id:'5', name:'Jordan Lee',        email:'jordan@email.com',    phone:'+1 512 555 0175', location:'Austin, TX',         current_title:'Staff Engineer',           applied_for:'Senior Backend Engineer',  stage:'shortlisted', source:'ziprecruiter',composite_score:91, cv_score:93, phone_screen_score:90, assessment_score:89, interview_score:92, skills:['Go','Kubernetes','gRPC','Terraform','AWS'],           created_at:'2026-03-11', summary:'Jordan is an exceptional systems engineer. Top performer in all evaluation stages. Jury unanimous: strong hire. Recommend fast-tracking to offer.' },
+  '6':  { id:'6', name:'Emma Wilson',       email:'emma@email.com',      phone:'+1 617 555 0106', location:'Boston, MA',         current_title:'Frontend Developer',       applied_for:'Frontend Engineer',        stage:'applied',     source:'indeed',      composite_score:55, cv_score:54, phone_screen_score:56, assessment_score:53, interview_score:null, skills:['React','TypeScript','CSS','HTML'],                    created_at:'2026-03-13', summary:'Emma has 2 years of frontend experience. Strong in React but limited TypeScript depth. Assessment pending. Junior-to-mid level fit.' },
+  '7':  { id:'7', name:"Liam O'Brien",      email:'liam@email.com',      phone:'+1 720 555 0137', location:'Denver, CO',         current_title:'DevOps Engineer',          applied_for:'DevOps Engineer',          stage:'screening',   source:'direct',      composite_score:63, cv_score:61, phone_screen_score:65, assessment_score:62, interview_score:null, skills:['Terraform','AWS','Docker','CI/CD','Prometheus'],      created_at:'2026-03-10', summary:'Liam has practical DevOps experience but mostly with smaller-scale systems. Good attitude. Jury lean is to progress to technical assessment.' },
+  '8':  { id:'8', name:'Sofia Martinez',    email:'sofia@email.com',     phone:'+1 305 555 0148', location:'Miami, FL',          current_title:'Marketing Manager',        applied_for:'Head of Marketing',        stage:'rejected',    source:'indeed',      composite_score:44, cv_score:42, phone_screen_score:43, assessment_score:46, interview_score:null, skills:['SEO','Content','Analytics','Social Media'],          created_at:'2026-03-08', summary:'Sofia has B2C marketing experience but limited B2B SaaS exposure. Poor fit for this role. Jury unanimous: reject.' },
+  '9':  { id:'9', name:'Elena Vasquez',     email:'elena@email.com',     phone:'+1 213 555 0169', location:'Los Angeles, CA',    current_title:'VP of Marketing',          applied_for:'Head of Marketing',        stage:'interview',   source:'linkedin',    composite_score:83, cv_score:85, phone_screen_score:82, assessment_score:81, interview_score:83, skills:['Brand Strategy','Growth','GTM','Demand Gen','HubSpot'],created_at:'2026-03-14', summary:'Elena is a seasoned marketing leader with 10+ years. Strong strategic thinking and track record of scaling B2B pipelines. Jury: strong recommend.' },
+  '10': { id:'10',name:'Wei Zhang',         email:'wei@email.com',       phone:'+1 408 555 0110', location:'San Jose, CA',       current_title:'ML Engineer',              applied_for:'ML Engineer',              stage:'shortlisted', source:'linkedin',    composite_score:88, cv_score:90, phone_screen_score:87, assessment_score:86, interview_score:89, skills:['PyTorch','MLOps','Python','CUDA','Distributed Training'], created_at:'2026-03-15', summary:'Wei has deep expertise in production ML systems. Published 2 papers on efficient training. Jury unanimous: exceptional candidate, recommend offer.' },
+  '11': { id:'11',name:'Isabella Romano',   email:'isabella@email.com',  phone:'+1 646 555 0111', location:'New York, NY',       current_title:'iOS Engineer',             applied_for:'iOS Engineer',             stage:'interview',   source:'direct',      composite_score:76, cv_score:77, phone_screen_score:75, assessment_score:74, interview_score:77, skills:['Swift','UIKit','SwiftUI','Core Data','Combine'],       created_at:'2026-03-13', summary:'Isabella has strong iOS fundamentals with 5 years of App Store experience. Good problem-solving in the interview. Jury leans towards shortlist.' },
+  '12': { id:'12',name:'Noah Thompson',     email:'noah@email.com',      phone:'+1 347 555 0112', location:'New York, NY',       current_title:'Account Executive',        applied_for:'Sales Executive',          stage:'screening',   source:'linkedin',    composite_score:69, cv_score:68, phone_screen_score:70, assessment_score:67, interview_score:null, skills:['SaaS Sales','Salesforce','Negotiation','Outbound'],   created_at:'2026-03-12', summary:'Noah has 4 years of SaaS AE experience with a solid track record. Missed quota last year. Jury recommendation: proceed to full assessment.' },
+  '13': { id:'13',name:'Aisha Kofi',        email:'aisha@email.com',     phone:'+1 415 555 0113', location:'San Francisco, CA',  current_title:'Product Designer',         applied_for:'Product Designer',         stage:'shortlisted', source:'indeed',      composite_score:82, cv_score:84, phone_screen_score:80, assessment_score:81, interview_score:83, skills:['Figma','Design Systems','Accessibility','Motion Design'], created_at:'2026-03-14', summary:'Aisha has exceptional design portfolio with a focus on accessibility. Strong systems thinker. Jury unanimous: shortlist and move to offer stage.' },
+  '14': { id:'14',name:'Diego Herrera',     email:'diego@email.com',     phone:'+1 512 555 0114', location:'Austin, TX',         current_title:'Frontend Engineer',        applied_for:'Frontend Engineer',        stage:'screening',   source:'ziprecruiter',composite_score:71, cv_score:72, phone_screen_score:70, assessment_score:69, interview_score:null, skills:['Vue.js','CSS','Performance','Webpack','TypeScript'],   created_at:'2026-03-11', summary:'Diego has 4 years of Vue experience transitioning to React. Good CSS fundamentals, some performance optimization work. Jury: proceed to assessment.' },
+  '15': { id:'15',name:'Yuki Tanaka',       email:'yuki@email.com',      phone:'+1 650 555 0115', location:'Palo Alto, CA',      current_title:'Senior Data Scientist',    applied_for:'Data Scientist',           stage:'offered',     source:'linkedin',    composite_score:93, cv_score:94, phone_screen_score:92, assessment_score:91, interview_score:94, skills:['R','Statistics','Visualization','Bayesian Modeling','Python'], created_at:'2026-03-15', summary:'Yuki is a world-class data scientist with a PhD and 3 publications. Perfect technical and cultural fit. Jury unanimous: offer extended.' },
+}
+
 export default function CandidateDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
@@ -109,7 +130,9 @@ export default function CandidateDetail() {
       setLoading(true)
       setError(null)
       try {
-        const candidateData = await getCandidate(id)
+        const res = await getCandidate(id)
+        // API returns { status, data: { candidate, applications, ... } }
+        const candidateData = res?.data?.candidate || res?.data || res
         setCandidate(candidateData)
 
         // Load related data in parallel, gracefully handling missing data
@@ -117,31 +140,37 @@ export default function CandidateDetail() {
 
         if (candidateData.assessment_id) {
           promises.push(
-            getAssessment(candidateData.assessment_id).then(setAssessment).catch(() => null)
+            getAssessment(candidateData.assessment_id).then(d => setAssessment(d?.data || d)).catch(() => null)
           )
         }
 
         if (candidateData.interview_id) {
           promises.push(
-            getInterview(candidateData.interview_id).then(setInterview).catch(() => null)
+            getInterview(candidateData.interview_id).then(d => setInterview(d?.data || d)).catch(() => null)
           )
           promises.push(
-            getTranscript(candidateData.interview_id).then(setTranscript).catch(() => null)
+            getTranscript(candidateData.interview_id).then(d => setTranscript(d?.data || d)).catch(() => null)
           )
           promises.push(
-            getFacialAnalysis(candidateData.interview_id).then(setFacialAnalysis).catch(() => null)
+            getFacialAnalysis(candidateData.interview_id).then(d => setFacialAnalysis(d?.data || d)).catch(() => null)
           )
         }
 
         if (candidateData.application_id) {
           promises.push(
-            getNotes(candidateData.application_id).then(setNotes).catch(() => [])
+            getNotes(candidateData.application_id).then(d => setNotes(d?.data?.items || d?.data || d || [])).catch(() => [])
           )
         }
 
         await Promise.all(promises)
       } catch (err) {
-        setError(err.message || 'Failed to load candidate data')
+        // Fall back to demo mock data for the 15 candidates shown on the Candidates page
+        const mock = MOCK_DETAILS[id]
+        if (mock) {
+          setCandidate(mock)
+        } else {
+          setError(err.message || 'Failed to load candidate data')
+        }
       } finally {
         setLoading(false)
       }
