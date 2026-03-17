@@ -1,79 +1,193 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, CartesianGrid, Legend,
 } from 'recharts'
 import Layout, { PageHeader } from '../components/Layout'
 import PipelineFunnel from '../components/PipelineFunnel'
-
-const PIPELINE_DATA = [
-  { stage: 'Applied', count: 847 },
-  { stage: 'Screened', count: 412 },
-  { stage: 'Interviewed', count: 198 },
-  { stage: 'Shortlisted', count: 87 },
-  { stage: 'Offered', count: 34 },
-  { stage: 'Hired', count: 23 },
-]
-
-const SOURCE_DATA = [
-  { name: 'LinkedIn', count: 318, hired: 11, color: '#60a5fa' },
-  { name: 'Indeed', count: 229, hired: 7, color: '#818cf8' },
-  { name: 'Direct', count: 161, hired: 3, color: '#34d399' },
-  { name: 'ZipRecruiter', count: 93, hired: 2, color: '#fbbf24' },
-  { name: 'Other', count: 46, hired: 0, color: '#71717a' },
-]
-
-const TIME_TO_HIRE = [
-  { month: 'Oct', days: 24 },
-  { month: 'Nov', days: 22 },
-  { month: 'Dec', days: 26 },
-  { month: 'Jan', days: 21 },
-  { month: 'Feb', days: 19 },
-  { month: 'Mar', days: 18 },
-]
-
-const SCORE_HISTOGRAM = [
-  { range: '0-10', count: 12 },
-  { range: '10-20', count: 18 },
-  { range: '20-30', count: 24 },
-  { range: '30-40', count: 38 },
-  { range: '40-50', count: 67 },
-  { range: '50-60', count: 112 },
-  { range: '60-70', count: 148 },
-  { range: '70-80', count: 187 },
-  { range: '80-90', count: 156 },
-  { range: '90-100', count: 85 },
-]
-
-const HIRE_BY_STAGE = [
-  { stage: 'CV Score', avg: 74 },
-  { stage: 'Phone Screen', avg: 68 },
-  { stage: 'Assessment', avg: 79 },
-  { stage: 'Interview', avg: 83 },
-]
-
-const TOP_SOURCES = [
-  { source: 'LinkedIn', candidates: 318, hired: 11, rate: '3.5%', avgScore: 72 },
-  { source: 'Indeed', candidates: 229, hired: 7, rate: '3.1%', avgScore: 68 },
-  { source: 'Direct', candidates: 161, hired: 3, rate: '1.9%', avgScore: 75 },
-  { source: 'ZipRecruiter', candidates: 93, hired: 2, rate: '2.2%', avgScore: 65 },
-  { source: 'Other', candidates: 46, hired: 0, rate: '0%', avgScore: 61 },
-]
-
-const MONTHLY_HIRES = [
-  { month: 'Oct', hires: 3, applications: 121 },
-  { month: 'Nov', hires: 4, applications: 138 },
-  { month: 'Dec', hires: 2, applications: 98 },
-  { month: 'Jan', hires: 5, applications: 156 },
-  { month: 'Feb', hires: 6, applications: 172 },
-  { month: 'Mar', hires: 3, applications: 162 },
-]
+import { PageLoader } from '../components/LoadingSpinner'
+import { useAuth } from '../lib/auth'
+import { supabase } from '../lib/supabase'
+import { STAGE_LABELS, STAGE_ORDER, deriveStage } from '../lib/db'
 
 const TOOLTIP_STYLE = { background: '#18181b', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 12 }
 
+// Custom label for pie chart segments
+function PieLabel({ cx, cy, midAngle, innerRadius, outerRadius, percent }) {
+  if (percent < 0.05) return null
+  const RADIAN = Math.PI / 180
+  const radius = innerRadius + (outerRadius - innerRadius) * 0.55
+  const x = cx + radius * Math.cos(-midAngle * RADIAN)
+  const y = cy + radius * Math.sin(-midAngle * RADIAN)
+  return (
+    <text x={x} y={y} fill="#fff" textAnchor="middle" dominantBaseline="central" fontSize={12} fontWeight={600}>
+      {`${(percent * 100).toFixed(0)}%`}
+    </text>
+  )
+}
+
 export default function Analytics() {
+  const { company } = useAuth()
   const [dateRange, setDateRange] = useState('6m')
-  const [jobFilter, setJobFilter] = useState('all')
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  // Real data states
+  const [pipelineData, setPipelineData] = useState([])
+  const [assessmentData, setAssessmentData] = useState([])
+  const [assessmentStats, setAssessmentStats] = useState({ completed: 0, pending: 0, total: 0 })
+  const [kpiStats, setKpiStats] = useState({
+    totalApplications: 0,
+    totalHires: 0,
+    hireRate: '0%',
+  })
+  const [monthlyData, setMonthlyData] = useState([])
+  const [scoreHistogram, setScoreHistogram] = useState([])
+
+  useEffect(() => {
+    if (!company?.id) {
+      setLoading(false)
+      return
+    }
+    loadAnalytics(company.id)
+  }, [company?.id])
+
+  async function loadAnalytics(companyId) {
+    setLoading(true)
+    setError(null)
+    try {
+      // Fetch all applications with stage data
+      const { data: apps, error: appsErr } = await supabase
+        .from('applications')
+        .select(`
+          application_id, status, pipeline_stage, applied_at,
+          jobs!inner(job_id, company_id),
+          stage2_results(total_score)
+        `)
+        .eq('jobs.company_id', companyId)
+        .order('applied_at', { ascending: false })
+      if (appsErr) throw appsErr
+
+      const allApps = apps || []
+
+      // KPI stats
+      const totalApplications = allApps.length
+      const totalHires = allApps.filter(a => a.status === 'hired').length
+      const hireRate = totalApplications > 0
+        ? `${((totalHires / totalApplications) * 100).toFixed(1)}%`
+        : '0%'
+      setKpiStats({ totalApplications, totalHires, hireRate })
+
+      // Pipeline funnel
+      const stageCounts = {}
+      for (const key of STAGE_ORDER) stageCounts[key] = 0
+      for (const a of allApps) {
+        const s = deriveStage(a.status, a.pipeline_stage)
+        stageCounts[s] = (stageCounts[s] || 0) + 1
+      }
+      setPipelineData(STAGE_ORDER.map(key => ({
+        stage: STAGE_LABELS[key],
+        count: stageCounts[key] ?? 0,
+      })))
+
+      // Monthly hires vs applications (last 6 months)
+      const now = new Date()
+      const months = []
+      for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        months.push({
+          month: d.toLocaleString('default', { month: 'short' }),
+          year: d.getFullYear(),
+          monthNum: d.getMonth(),
+          hires: 0,
+          applications: 0,
+        })
+      }
+      for (const a of allApps) {
+        if (!a.applied_at) continue
+        const d = new Date(a.applied_at)
+        const entry = months.find(m => m.year === d.getFullYear() && m.monthNum === d.getMonth())
+        if (entry) {
+          entry.applications++
+          if (a.status === 'hired') entry.hires++
+        }
+      }
+      setMonthlyData(months)
+
+      // Score histogram from stage2_results
+      const RANGES = [
+        { range: '0-10', min: 0, max: 10 },
+        { range: '10-20', min: 10, max: 20 },
+        { range: '20-30', min: 20, max: 30 },
+        { range: '30-40', min: 30, max: 40 },
+        { range: '40-50', min: 40, max: 50 },
+        { range: '50-60', min: 50, max: 60 },
+        { range: '60-70', min: 60, max: 70 },
+        { range: '70-80', min: 70, max: 80 },
+        { range: '80-90', min: 80, max: 90 },
+        { range: '90-100', min: 90, max: 101 },
+      ]
+      const histCounts = RANGES.map(r => ({ ...r, count: 0 }))
+      for (const a of allApps) {
+        const score = a.stage2_results?.total_score
+        if (score == null) continue
+        const bucket = histCounts.find(r => score >= r.min && score < r.max)
+        if (bucket) bucket.count++
+      }
+      setScoreHistogram(histCounts)
+
+      // Assessment completion: get job IDs, then query interviews
+      const jobIds = [...new Set(allApps.map(a => a.jobs?.job_id).filter(Boolean))]
+      if (jobIds.length > 0) {
+        const { data: interviews, error: intErr } = await supabase
+          .from('interviews')
+          .select('status, job_id')
+          .in('job_id', jobIds)
+        if (intErr) throw intErr
+
+        const total = (interviews || []).length
+        const completed = (interviews || []).filter(i => i.status === 'completed').length
+        const pending = total - completed
+        setAssessmentStats({ completed, pending, total })
+        setAssessmentData([
+          { name: 'Completed', value: completed },
+          { name: 'Pending', value: pending },
+        ])
+      } else {
+        setAssessmentStats({ completed: 0, pending: 0, total: 0 })
+        setAssessmentData([{ name: 'Completed', value: 0 }, { name: 'Pending', value: 0 }])
+      }
+    } catch (err) {
+      console.error('Analytics error:', err)
+      setError(err.message || 'Failed to load analytics data')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (loading) return <Layout><PageLoader /></Layout>
+
+  if (error) {
+    return (
+      <Layout>
+        <PageHeader title="Analytics" subtitle="Pipeline performance, hiring trends, and source effectiveness" />
+        <div style={{ padding: '40px 28px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--danger)', fontSize: 14 }}>{error}</p>
+        </div>
+      </Layout>
+    )
+  }
+
+  if (!company?.id) {
+    return (
+      <Layout>
+        <PageHeader title="Analytics" subtitle="Pipeline performance, hiring trends, and source effectiveness" />
+        <div style={{ padding: '40px 28px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No company configured for your account.</p>
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout>
@@ -82,12 +196,6 @@ export default function Analytics() {
         subtitle="Pipeline performance, hiring trends, and source effectiveness"
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
-            <select value={jobFilter} onChange={e => setJobFilter(e.target.value)} style={{ width: 'auto', padding: '7px 12px', fontSize: 12 }}>
-              <option value="all">All Jobs</option>
-              <option value="1">Senior Backend Engineer</option>
-              <option value="2">Product Designer</option>
-              <option value="3">Head of Marketing</option>
-            </select>
             <div style={{ display: 'flex', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, overflow: 'hidden' }}>
               {[['1m', '1M'], ['3m', '3M'], ['6m', '6M'], ['1y', '1Y']].map(([val, lbl]) => (
                 <button key={val} onClick={() => setDateRange(val)} style={{ padding: '6px 10px', background: dateRange === val ? 'var(--bg-tertiary)' : 'transparent', color: dateRange === val ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 12, fontWeight: dateRange === val ? 600 : 400 }}>{lbl}</button>
@@ -99,18 +207,15 @@ export default function Analytics() {
 
       <div style={{ padding: '20px 28px', display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* KPI Summary row */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12 }}>
           {[
-            { label: 'Total Applications', value: '847', change: '+12%', color: 'var(--info)' },
-            { label: 'Total Hires', value: '23', change: '+18%', color: 'var(--success)' },
-            { label: 'Avg Time-to-Hire', value: '18d', change: '-3d', color: 'var(--warning)' },
-            { label: 'Hire Rate', value: '2.7%', change: '+0.4%', color: 'var(--accent)' },
-            { label: 'Avg Composite Score', value: '71', change: '+3', color: 'var(--text-secondary)' },
+            { label: 'Total Applications', value: kpiStats.totalApplications.toLocaleString(), color: 'var(--info)' },
+            { label: 'Total Hires', value: kpiStats.totalHires.toLocaleString(), color: 'var(--success)' },
+            { label: 'Hire Rate', value: kpiStats.hireRate, color: 'var(--accent)' },
           ].map(kpi => (
             <div key={kpi.label} style={{ padding: '14px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
               <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.06em' }}>{kpi.label}</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: kpi.color, fontFamily: 'Geist Mono, monospace', lineHeight: 1 }}>{kpi.value}</div>
-              <div style={{ fontSize: 11, color: 'var(--success)', marginTop: 4 }}>{kpi.change} vs prev period</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: kpi.color, fontFamily: 'Geist Mono, monospace', lineHeight: 1 }}>{kpi.value}</div>
             </div>
           ))}
         </div>
@@ -118,11 +223,11 @@ export default function Analytics() {
         {/* Row 1: Pipeline + Monthly Hires */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
           <ChartCard title="Hiring Pipeline" subtitle="All stages, all jobs">
-            <PipelineFunnel data={PIPELINE_DATA} />
+            <PipelineFunnel data={pipelineData} />
           </ChartCard>
           <ChartCard title="Monthly Hires vs Applications" subtitle="6-month trend">
             <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={MONTHLY_HIRES} barSize={20}>
+              <BarChart data={monthlyData} barSize={20}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
                 <XAxis dataKey="month" tick={{ fill: '#a1a1aa', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis yAxisId="left" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
@@ -135,102 +240,99 @@ export default function Analytics() {
           </ChartCard>
         </div>
 
-        {/* Row 2: Time to Hire + Score Distribution */}
+        {/* Row 2: Score Distribution + Assessment Completion */}
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <ChartCard title="Time-to-Hire Trend" subtitle="Average days from application to hire">
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={TIME_TO_HIRE}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis dataKey="month" tick={{ fill: '#a1a1aa', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} domain={[10, 30]} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={v => [`${v} days`, 'Avg Time-to-Hire']} />
-                <Line type="monotone" dataKey="days" stroke="#818cf8" strokeWidth={2.5} dot={{ fill: '#818cf8', r: 4 }} activeDot={{ r: 6 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </ChartCard>
           <ChartCard title="Score Distribution" subtitle="Composite score histogram across all candidates">
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={SCORE_HISTOGRAM} barSize={18}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis dataKey="range" tick={{ fill: '#71717a', fontSize: 10 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} />
-                {SCORE_HISTOGRAM.map((entry, i) => null)}
-                <Bar dataKey="count" radius={[3, 3, 0, 0]}>
-                  {SCORE_HISTOGRAM.map((entry, i) => {
-                    const pct = parseInt(entry.range.split('-')[0])
-                    const color = pct >= 80 ? '#34d399' : pct >= 60 ? '#818cf8' : pct >= 40 ? '#fbbf24' : '#f87171'
-                    return <Cell key={i} fill={color} />
-                  })}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
+            {scoreHistogram.every(b => b.count === 0) ? (
+              <div style={{ height: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No score data available yet.</p>
+              </div>
+            ) : (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={scoreHistogram} barSize={18}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                  <XAxis dataKey="range" tick={{ fill: '#71717a', fontSize: 10 }} axisLine={false} tickLine={false} />
+                  <YAxis tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+                  <Tooltip contentStyle={TOOLTIP_STYLE} />
+                  <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                    {scoreHistogram.map((entry, i) => {
+                      const pct = parseInt(entry.range.split('-')[0])
+                      const color = pct >= 80 ? '#34d399' : pct >= 60 ? '#818cf8' : pct >= 40 ? '#fbbf24' : '#f87171'
+                      return <Cell key={i} fill={color} />
+                    })}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </ChartCard>
-        </div>
 
-        {/* Row 3: Source + Avg Score per Stage */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <ChartCard title="Source of Hire" subtitle="Applications and conversion by channel">
-            <div style={{ marginBottom: 10 }}>
-              {SOURCE_DATA.map(s => (
-                <div key={s.name} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 7 }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', background: s.color, flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 90 }}>{s.name}</span>
-                  <div style={{ flex: 1, height: 5, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
-                    <div style={{ width: `${(s.count / 847) * 100}%`, height: '100%', background: s.color, borderRadius: 2 }} />
-                  </div>
-                  <span style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace', color: 'var(--text-primary)', minWidth: 28, textAlign: 'right' }}>{s.count}</span>
-                  <span style={{ fontSize: 11, color: s.hired > 0 ? 'var(--success)' : 'var(--text-muted)', minWidth: 50, textAlign: 'right' }}>{s.hired} hired</span>
+          {/* Assessment Completion Rate Pie Chart */}
+          <ChartCard title="AI Assessment Completion Rate" subtitle="Candidates who completed their AI video assessment">
+            {assessmentStats.total === 0 ? (
+              <div style={{ height: 220, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <p style={{ fontSize: 13, color: 'var(--text-muted)' }}>No interview data available yet.</p>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 24 }}>
+                <div style={{ flex: '0 0 200px', height: 200 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={assessmentData}
+                        cx="50%"
+                        cy="50%"
+                        outerRadius={80}
+                        dataKey="value"
+                        labelLine={false}
+                        label={PieLabel}
+                      >
+                        <Cell fill="#22c55e" />
+                        <Cell fill="#71717a" />
+                      </Pie>
+                      <Tooltip
+                        contentStyle={TOOLTIP_STYLE}
+                        formatter={(value, name) => [`${value} candidates`, name]}
+                      />
+                      <Legend
+                        iconType="circle"
+                        iconSize={8}
+                        wrapperStyle={{ fontSize: 12, color: 'var(--text-secondary)' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
                 </div>
-              ))}
-            </div>
-          </ChartCard>
-          <ChartCard title="Average Score by Stage" subtitle="Dropoff analysis through the pipeline">
-            <ResponsiveContainer width="100%" height={200}>
-              <BarChart data={HIRE_BY_STAGE} barSize={32}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                <XAxis dataKey="stage" tick={{ fill: '#a1a1aa', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis domain={[0, 100]} tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip contentStyle={TOOLTIP_STYLE} formatter={v => [`${v}/100`, 'Avg Score']} />
-                <Bar dataKey="avg" fill="#818cf8" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Total Sent</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Geist Mono, monospace', lineHeight: 1 }}>
+                      {assessmentStats.total}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Completed</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#22c55e', fontFamily: 'Geist Mono, monospace', lineHeight: 1 }}>
+                      {assessmentStats.completed}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>Pending</div>
+                    <div style={{ fontSize: 24, fontWeight: 700, color: '#71717a', fontFamily: 'Geist Mono, monospace', lineHeight: 1 }}>
+                      {assessmentStats.pending}
+                    </div>
+                  </div>
+                  {assessmentStats.total > 0 && (
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                      <span style={{ color: '#22c55e', fontWeight: 600 }}>
+                        {Math.round((assessmentStats.completed / assessmentStats.total) * 100)}%
+                      </span>
+                      {' '}completion rate
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </ChartCard>
         </div>
-
-        {/* Top Sources Table */}
-        <ChartCard title="Top Performing Sources" subtitle="Ranked by hire rate">
-          <table>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Source</th>
-                <th>Candidates</th>
-                <th>Hired</th>
-                <th>Hire Rate</th>
-                <th>Avg Score</th>
-                <th>Score Bar</th>
-              </tr>
-            </thead>
-            <tbody>
-              {TOP_SOURCES.map((s, i) => (
-                <tr key={s.source}>
-                  <td style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--text-muted)', fontSize: 12 }}>{i + 1}</td>
-                  <td style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13 }}>{s.source}</td>
-                  <td style={{ fontFamily: 'Geist Mono, monospace', fontSize: 13 }}>{s.candidates}</td>
-                  <td style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--success)', fontWeight: 600 }}>{s.hired}</td>
-                  <td style={{ fontFamily: 'Geist Mono, monospace', color: 'var(--accent)' }}>{s.rate}</td>
-                  <td style={{ fontFamily: 'Geist Mono, monospace', fontWeight: 700, color: s.avgScore >= 70 ? 'var(--success)' : 'var(--warning)' }}>{s.avgScore}</td>
-                  <td style={{ minWidth: 120 }}>
-                    <div style={{ height: 5, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
-                      <div style={{ width: `${s.avgScore}%`, height: '100%', background: s.avgScore >= 70 ? 'var(--success)' : 'var(--warning)', borderRadius: 2 }} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </ChartCard>
       </div>
     </Layout>
   )
