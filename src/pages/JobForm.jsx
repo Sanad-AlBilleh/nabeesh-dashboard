@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -15,21 +15,20 @@ import { useAuth } from '../lib/auth'
 // ─── Zod Schema ────────────────────────────────────────────────────────────────
 
 const schema = z.object({
-  title: z.string().min(3, 'Job title is required'),
-  description: z.string().min(20, 'Description must be at least 20 characters'),
-  location: z.string().min(1, 'Location is required'),
-  city: z.string().optional(),
-  country: z.string().optional(),
-  seniority_level: z.string().min(1, 'Select a seniority level'),
-  required_education: z.string().optional(),
-  required_years_experience: z.number().min(0).optional(),
-  employment_type: z.string().min(1, 'Select employment type'),
-  salary_min: z.number().optional(),
-  salary_max: z.number().optional(),
-  currency: z.string().optional(),
-  location_type: z.string().min(1, 'Select location type'),
-  recruiter_intent: z.string().optional(),
-  interview_questions_count: z.number().min(1).max(20).optional(),
+  title: z.string().min(1, 'Job title is required'),
+  job_description: z.string().optional(),
+  job_city: z.string().optional(),
+  job_country: z.string().optional(),
+  seniority_level: z.string().optional(),
+  employment_type: z.string().optional(),
+  required_education_level: z.string().optional(),
+  required_major: z.string().optional(),
+  required_years_relevant_experience: z.coerce.number().optional(),
+  salary_min: z.coerce.number().optional(),
+  salary_max: z.coerce.number().optional(),
+  salary_currency: z.string().optional().default('USD'),
+  salary_period: z.string().optional().default('monthly'),
+  interview_questions_count: z.coerce.number().optional().default(8),
 })
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
@@ -127,6 +126,41 @@ const fieldStyle = { marginBottom: 14 }
 const labelStyle = { display: 'block', fontSize: 12, fontWeight: 500, color: 'var(--text-secondary)', marginBottom: 5 }
 const errorStyle = { fontSize: 11, color: 'var(--danger)', marginTop: 3 }
 const gridTwo = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }
+
+const inputStyle = {
+  width: '100%',
+  padding: '7px 10px',
+  background: 'var(--bg-primary)',
+  border: '1px solid var(--border)',
+  borderRadius: 6,
+  color: 'var(--text-primary)',
+  fontSize: 13,
+  boxSizing: 'border-box',
+}
+
+const tagStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: 5,
+  padding: '3px 9px',
+  background: 'rgba(99,102,241,0.12)',
+  border: '1px solid rgba(99,102,241,0.3)',
+  borderRadius: 20,
+  fontSize: 12,
+  color: 'var(--text-primary)',
+}
+
+const removeTagBtn = {
+  background: 'none',
+  border: 'none',
+  color: 'var(--text-muted)',
+  cursor: 'pointer',
+  padding: 0,
+  fontSize: 14,
+  lineHeight: 1,
+  display: 'flex',
+  alignItems: 'center',
+}
 
 // ─── Scoring Weights Section ───────────────────────────────────────────────────
 
@@ -466,13 +500,20 @@ export default function JobForm() {
   const [error, setError] = useState(null)
   const [fetchingJob, setFetchingJob] = useState(isEdit)
 
-  // Tag inputs
-  const [requiredSkills, setRequiredSkills] = useState([])
-  const [preferredSkills, setPreferredSkills] = useState([])
-  const [focusAreas, setFocusAreas] = useState([])
+  // Remote toggle
+  const [isRemote, setIsRemote] = useState(false)
 
-  // Distribution platforms
-  const [platforms, setPlatforms] = useState({ indeed: false, linkedin: false, ziprecruiter: false, glassdoor: false })
+  // Tag inputs — required skills (controlled)
+  const [requiredSkills, setRequiredSkills] = useState([])
+  const [reqSkillInput, setReqSkillInput] = useState('')
+
+  // Tag inputs — preferred skills (controlled)
+  const [preferredSkills, setPreferredSkills] = useState([])
+  const [prefSkillInput, setPrefSkillInput] = useState('')
+
+  // Core responsibilities (controlled)
+  const [coreResponsibilities, setCoreResponsibilities] = useState([])
+  const [coreRespInput, setCoreRespInput] = useState('')
 
   // Assessment picker
   const [assessments, setAssessments] = useState([])
@@ -488,8 +529,8 @@ export default function JobForm() {
   const { register, handleSubmit, formState: { errors }, reset } = useForm({
     resolver: zodResolver(schema),
     defaultValues: {
-      currency: 'USD',
-      location_type: 'hybrid',
+      salary_currency: 'USD',
+      salary_period: 'monthly',
       employment_type: 'full-time',
       seniority_level: 'mid',
       interview_questions_count: 8,
@@ -528,31 +569,29 @@ export default function JobForm() {
         }
         reset({
           title: data.title || '',
-          description: data.description || '',
-          location: data.location || '',
-          city: data.city || '',
-          country: data.country || '',
+          job_description: data.job_description || '',
+          job_city: data.job_city || '',
+          job_country: data.job_country || '',
           seniority_level: data.seniority_level || 'mid',
-          required_education: data.required_education || '',
-          required_years_experience: data.required_years_experience ?? undefined,
           employment_type: data.employment_type || 'full-time',
+          required_education_level: data.required_education_level || '',
+          required_major: data.required_major || '',
+          required_years_relevant_experience: data.required_years_relevant_experience ?? undefined,
           salary_min: data.salary_min ?? undefined,
           salary_max: data.salary_max ?? undefined,
-          currency: data.currency || 'USD',
-          location_type: data.location_type || 'hybrid',
-          recruiter_intent: data.recruiter_intent || '',
-          interview_questions_count: data.interview_questions_count ?? 8,
+          salary_currency: data.salary_currency || 'USD',
+          salary_period: data.salary_period || 'monthly',
+          interview_questions_count: data.recruiter_interview_config?.total_questions ?? 8,
         })
+        setIsRemote(data.is_remote || false)
         setRequiredSkills(data.required_skills || [])
         setPreferredSkills(data.preferred_skills || [])
-        setFocusAreas(data.focus_areas || [])
-        if (data.distribution_platforms?.length) {
-          const p = { indeed: false, linkedin: false, ziprecruiter: false, glassdoor: false }
-          data.distribution_platforms.forEach(k => { if (k in p) p[k] = true })
-          setPlatforms(p)
-        }
+        setCoreResponsibilities(data.core_responsibilities || [])
         if (data.assessment_id) setSelectedAssessmentId(String(data.assessment_id))
         if (data.scoring_weights) setWeights({ ...DEFAULT_WEIGHTS, ...data.scoring_weights })
+        if (data.recruiter_intent?.weights) {
+          setWeights({ ...DEFAULT_WEIGHTS, ...data.recruiter_intent.weights })
+        }
         if (data.knockout_criteria?.length) {
           setKnockouts(data.knockout_criteria.map(ko => ({
             _id: crypto.randomUUID(),
@@ -584,13 +623,47 @@ export default function JobForm() {
           label: buildKnockoutLabel(ko),
         }))
 
+      const recruiterIntent = {
+        experience_tolerance_years: 1,
+        min_required_skills_match: 1,
+        location_policy: isRemote ? 'off' : 'flexible',
+        seniority_overqual: 'allow_deprioritize',
+        education_overqual: 'ignore',
+        major_policy: 'allow_deprioritize',
+        stage2_top_k: 50,
+        weights: {
+          skills_match: weights.skills_match,
+          experience_relevance: weights.experience_relevance,
+          education_relevance: weights.education_relevance,
+          project_portfolio: weights.project_portfolio,
+          seniority_fit: weights.seniority_fit,
+        },
+      }
+
       const payload = {
-        ...data,
+        title: data.title,
+        job_description: data.job_description || '',
+        job_city: data.job_city || '',
+        job_country: data.job_country || '',
+        is_remote: isRemote,
+        seniority_level: data.seniority_level,
+        employment_type: data.employment_type,
+        required_education_level: data.required_education_level || '',
+        required_major: data.required_major || '',
+        required_years_relevant_experience: data.required_years_relevant_experience || 0,
         required_skills: requiredSkills,
         preferred_skills: preferredSkills,
-        distribution_platforms: Object.entries(platforms).filter(([, v]) => v).map(([k]) => k),
-        focus_areas: focusAreas,
-        status: publish ? 'published' : 'draft',
+        core_responsibilities: coreResponsibilities,
+        salary_min: data.salary_min || null,
+        salary_max: data.salary_max || null,
+        salary_currency: data.salary_currency || 'USD',
+        salary_period: data.salary_period || 'monthly',
+        recruiter_intent: recruiterIntent,
+        recruiter_interview_config: {
+          total_questions: data.interview_questions_count || 8,
+          custom_questions: [],
+        },
+        status: publish ? 'open' : 'draft',
         assessment_id: selectedAssessmentId ? Number(selectedAssessmentId) : null,
         scoring_weights: weights,
         knockout_criteria: knockoutCriteria,
@@ -601,15 +674,11 @@ export default function JobForm() {
           .from('jobs')
           .update(payload)
           .eq('job_id', id)
-          .select()
-          .single()
         if (updateErr) throw updateErr
       } else {
         const { error: insertErr } = await supabase
           .from('jobs')
-          .insert({ ...payload, company_id: companyId, created_by: user?.id })
-          .select()
-          .single()
+          .insert({ ...payload, company_id: companyId })
         if (insertErr) throw insertErr
       }
 
@@ -675,24 +744,60 @@ export default function JobForm() {
             {errors.title && <p style={errorStyle}>{errors.title.message}</p>}
           </div>
           <div style={fieldStyle}>
-            <label style={labelStyle}>Job Description *</label>
+            <label style={labelStyle}>Job Description</label>
             <textarea
               rows={5}
               placeholder="Describe the role, responsibilities, and what success looks like..."
               style={{ resize: 'vertical' }}
-              {...register('description')}
+              {...register('job_description')}
             />
-            {errors.description && <p style={errorStyle}>{errors.description.message}</p>}
+            {errors.job_description && <p style={errorStyle}>{errors.job_description.message}</p>}
           </div>
+
+          {/* Remote toggle */}
+          <div style={{ ...fieldStyle, display: 'flex', alignItems: 'center', gap: 12 }}>
+            <label style={{ ...labelStyle, marginBottom: 0 }}>Remote Position</label>
+            <button
+              type="button"
+              onClick={() => setIsRemote(prev => !prev)}
+              style={{
+                width: 44,
+                height: 24,
+                borderRadius: 12,
+                background: isRemote ? 'var(--accent)' : 'var(--bg-tertiary, #374151)',
+                border: '1px solid var(--border)',
+                cursor: 'pointer',
+                position: 'relative',
+                transition: 'background 0.2s',
+                flexShrink: 0,
+                padding: 0,
+              }}
+            >
+              <span style={{
+                position: 'absolute',
+                top: 2,
+                left: isRemote ? 22 : 2,
+                width: 18,
+                height: 18,
+                borderRadius: '50%',
+                background: '#fff',
+                transition: 'left 0.2s',
+                boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+              }} />
+            </button>
+            <span style={{ fontSize: 12, color: isRemote ? 'var(--accent)' : 'var(--text-muted)' }}>
+              {isRemote ? 'Yes — remote' : 'No — office / hybrid'}
+            </span>
+          </div>
+
           <div style={gridTwo}>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Location</label>
-              <input type="text" placeholder="e.g. San Francisco, CA" {...register('location')} />
-              {errors.location && <p style={errorStyle}>{errors.location.message}</p>}
+            <div style={{ ...fieldStyle, opacity: isRemote ? 0.4 : 1, pointerEvents: isRemote ? 'none' : 'auto' }}>
+              <label style={labelStyle}>City</label>
+              <input type="text" placeholder="e.g. San Francisco" {...register('job_city')} disabled={isRemote} />
             </div>
-            <div style={fieldStyle}>
+            <div style={{ ...fieldStyle, opacity: isRemote ? 0.4 : 1, pointerEvents: isRemote ? 'none' : 'auto' }}>
               <label style={labelStyle}>Country</label>
-              <input type="text" placeholder="e.g. United States" {...register('country')} />
+              <input type="text" placeholder="e.g. United States" {...register('job_country')} disabled={isRemote} />
             </div>
           </div>
         </div>
@@ -702,7 +807,7 @@ export default function JobForm() {
           <div style={sectionTitleStyle}>2. Requirements</div>
           <div style={gridTwo}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Seniority Level *</label>
+              <label style={labelStyle}>Seniority Level</label>
               <select {...register('seniority_level')}>
                 <option value="">Select level</option>
                 {SENIORITY_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
@@ -710,29 +815,121 @@ export default function JobForm() {
               {errors.seniority_level && <p style={errorStyle}>{errors.seniority_level.message}</p>}
             </div>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Required Education</label>
-              <select {...register('required_education')}>
+              <label style={labelStyle}>Required Education Level</label>
+              <select {...register('required_education_level')}>
                 <option value="">Any</option>
                 <option value="high_school">High School</option>
                 <option value="associate">Associate Degree</option>
-                <option value="bachelor">Bachelor's Degree</option>
-                <option value="master">Master's Degree</option>
+                <option value="bachelors">Bachelor's Degree</option>
+                <option value="masters">Master's Degree</option>
                 <option value="phd">PhD</option>
               </select>
             </div>
           </div>
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Years of Experience Required</label>
-            <input type="number" min={0} max={30} placeholder="0" style={{ width: 100 }} {...register('required_years_experience', { valueAsNumber: true })} />
+          <div style={gridTwo}>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Required Major / Field of Study</label>
+              <input type="text" placeholder="e.g. Computer Science, Engineering" {...register('required_major')} />
+            </div>
+            <div style={fieldStyle}>
+              <label style={labelStyle}>Years of Relevant Experience Required</label>
+              <input type="number" min={0} max={30} placeholder="0" {...register('required_years_relevant_experience')} />
+            </div>
           </div>
+
+          {/* Required Skills — controlled inline */}
           <div style={fieldStyle}>
             <label style={labelStyle}>Required Skills</label>
-            <TagInput value={requiredSkills} onChange={setRequiredSkills} placeholder="Type skill and press Enter..." />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+              {requiredSkills.map((s, i) => (
+                <span key={i} style={tagStyle}>
+                  {s}
+                  <button
+                    type="button"
+                    onClick={() => setRequiredSkills(prev => prev.filter((_, j) => j !== i))}
+                    style={removeTagBtn}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={reqSkillInput}
+              onChange={e => setReqSkillInput(e.target.value)}
+              onKeyDown={e => {
+                if ((e.key === 'Enter' || e.key === ',') && reqSkillInput.trim()) {
+                  e.preventDefault()
+                  setRequiredSkills(prev => [...prev, reqSkillInput.trim()])
+                  setReqSkillInput('')
+                }
+              }}
+              placeholder="Type skill and press Enter"
+              style={inputStyle}
+            />
             <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Press Enter or comma to add a skill</p>
           </div>
+
+          {/* Preferred Skills — controlled inline */}
           <div style={fieldStyle}>
             <label style={labelStyle}>Preferred Skills</label>
-            <TagInput value={preferredSkills} onChange={setPreferredSkills} placeholder="Nice-to-have skills..." />
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+              {preferredSkills.map((s, i) => (
+                <span key={i} style={tagStyle}>
+                  {s}
+                  <button
+                    type="button"
+                    onClick={() => setPreferredSkills(prev => prev.filter((_, j) => j !== i))}
+                    style={removeTagBtn}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={prefSkillInput}
+              onChange={e => setPrefSkillInput(e.target.value)}
+              onKeyDown={e => {
+                if ((e.key === 'Enter' || e.key === ',') && prefSkillInput.trim()) {
+                  e.preventDefault()
+                  setPreferredSkills(prev => [...prev, prefSkillInput.trim()])
+                  setPrefSkillInput('')
+                }
+              }}
+              placeholder="Type skill and press Enter"
+              style={inputStyle}
+            />
+          </div>
+
+          {/* Core Responsibilities */}
+          <div style={fieldStyle}>
+            <label style={labelStyle}>Core Responsibilities</label>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+              {coreResponsibilities.map((r, i) => (
+                <span key={i} style={{ ...tagStyle, background: 'rgba(52,211,153,0.10)', borderColor: 'rgba(52,211,153,0.3)' }}>
+                  {r}
+                  <button
+                    type="button"
+                    onClick={() => setCoreResponsibilities(prev => prev.filter((_, j) => j !== i))}
+                    style={removeTagBtn}
+                  >×</button>
+                </span>
+              ))}
+            </div>
+            <input
+              type="text"
+              value={coreRespInput}
+              onChange={e => setCoreRespInput(e.target.value)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' && coreRespInput.trim()) {
+                  e.preventDefault()
+                  setCoreResponsibilities(prev => [...prev, coreRespInput.trim()])
+                  setCoreRespInput('')
+                }
+              }}
+              placeholder="Type responsibility and press Enter"
+              style={inputStyle}
+            />
+            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Press Enter to add a responsibility</p>
           </div>
         </div>
 
@@ -741,7 +938,7 @@ export default function JobForm() {
           <div style={sectionTitleStyle}>3. Compensation &amp; Type</div>
           <div style={gridTwo}>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Employment Type *</label>
+              <label style={labelStyle}>Employment Type</label>
               <select {...register('employment_type')}>
                 <option value="full-time">Full-Time</option>
                 <option value="part-time">Part-Time</option>
@@ -751,26 +948,25 @@ export default function JobForm() {
               </select>
             </div>
             <div style={fieldStyle}>
-              <label style={labelStyle}>Location Type *</label>
-              <select {...register('location_type')}>
-                <option value="onsite">On-Site</option>
-                <option value="remote">Remote</option>
-                <option value="hybrid">Hybrid</option>
+              <label style={labelStyle}>Salary Period</label>
+              <select {...register('salary_period')}>
+                <option value="monthly">Monthly</option>
+                <option value="yearly">Yearly</option>
               </select>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 100px', gap: 12 }}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Salary Min</label>
-              <input type="number" placeholder="80000" {...register('salary_min', { valueAsNumber: true })} />
+              <input type="number" placeholder="80000" {...register('salary_min')} />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Salary Max</label>
-              <input type="number" placeholder="120000" {...register('salary_max', { valueAsNumber: true })} />
+              <input type="number" placeholder="120000" {...register('salary_max')} />
             </div>
             <div style={fieldStyle}>
               <label style={labelStyle}>Currency</label>
-              <select {...register('currency')}>
+              <select {...register('salary_currency')}>
                 <option value="USD">USD</option>
                 <option value="EUR">EUR</option>
                 <option value="GBP">GBP</option>
@@ -784,28 +980,15 @@ export default function JobForm() {
         {/* ── Section 4: AI Config ────────────────────────────────────────── */}
         <div style={sectionStyle}>
           <div style={sectionTitleStyle}>4. AI Configuration</div>
-          <div style={fieldStyle}>
-            <label style={labelStyle}>Recruiter Intent</label>
-            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>
-              Describe the ideal candidate profile and what traits/skills matter most. This guides the AI screener and interviewer.
-            </p>
-            <textarea
-              rows={4}
-              placeholder="We are looking for a senior backend engineer who excels at distributed systems, has experience with high-traffic APIs, and can mentor junior engineers..."
-              style={{ resize: 'vertical' }}
-              {...register('recruiter_intent')}
-            />
-          </div>
           <div style={gridTwo}>
             <div style={fieldStyle}>
               <label style={labelStyle}>Interview Questions Count</label>
-              <input type="number" min={3} max={20} {...register('interview_questions_count', { valueAsNumber: true })} />
-            </div>
-            <div style={fieldStyle}>
-              <label style={labelStyle}>Focus Areas</label>
-              <TagInput value={focusAreas} onChange={setFocusAreas} placeholder="e.g. Leadership, System Design..." />
+              <input type="number" min={3} max={20} {...register('interview_questions_count')} />
             </div>
           </div>
+          <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+            Scoring weights below control how candidates are ranked. The location policy is automatically set based on the Remote toggle above.
+          </p>
         </div>
 
         {/* ── Section 5: Assessment Picker ─────────────────────────────────── */}
@@ -844,54 +1027,6 @@ export default function JobForm() {
           </div>
           <ScoringWeights weights={weights} onChange={setWeights} />
           <KnockoutCriteria knockouts={knockouts} onChange={setKnockouts} />
-        </div>
-
-        {/* ── Section 7: Distribution Platforms ────────────────────────────── */}
-        <div style={sectionStyle}>
-          <div style={sectionTitleStyle}>7. Distribution Platforms</div>
-          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 14 }}>
-            Select platforms to publish this job to upon publishing.
-          </p>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
-            {[
-              { key: 'indeed', label: 'Indeed', color: '#818cf8' },
-              { key: 'linkedin', label: 'LinkedIn', color: '#60a5fa' },
-              { key: 'ziprecruiter', label: 'ZipRecruiter', color: '#34d399' },
-              { key: 'glassdoor', label: 'Glassdoor', color: '#fbbf24' },
-            ].map(p => (
-              <label
-                key={p.key}
-                style={{
-                  display: 'flex',
-                  flexDirection: 'column',
-                  alignItems: 'center',
-                  gap: 8,
-                  padding: '14px',
-                  background: platforms[p.key] ? `${p.color}12` : 'var(--bg-primary)',
-                  border: `1px solid ${platforms[p.key] ? p.color + '50' : 'var(--border)'}`,
-                  borderRadius: 8,
-                  cursor: 'pointer',
-                  transition: 'all 0.15s',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={platforms[p.key]}
-                  onChange={e => setPlatforms(prev => ({ ...prev, [p.key]: e.target.checked }))}
-                  style={{ display: 'none' }}
-                />
-                <div style={{ width: 32, height: 32, borderRadius: 8, background: `${p.color}25`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, fontSize: 12, color: p.color }}>
-                  {p.label[0]}{p.label[1]}
-                </div>
-                <span style={{ fontSize: 12, fontWeight: 600, color: platforms[p.key] ? p.color : 'var(--text-secondary)' }}>
-                  {p.label}
-                </span>
-                <div style={{ width: 16, height: 16, borderRadius: 4, border: `2px solid ${platforms[p.key] ? p.color : 'var(--border)'}`, background: platforms[p.key] ? p.color : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  {platforms[p.key] && <span style={{ color: '#fff', fontSize: 10, fontWeight: 800 }}>✓</span>}
-                </div>
-              </label>
-            ))}
-          </div>
         </div>
 
         {/* ── Action buttons ──────────────────────────────────────────────── */}

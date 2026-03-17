@@ -5,6 +5,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
 import { Zap, Mail, Lock, User, Building2, AlertCircle, Eye, EyeOff, CheckCircle } from 'lucide-react'
 import { useAuth } from '../lib/auth'
+import { supabase } from '../lib/supabase'
 
 const schema = z.object({
   full_name: z.string().min(2, 'Full name is required'),
@@ -36,10 +37,41 @@ export default function Signup() {
     setLoading(true)
     setError(null)
     try {
-      await signUp(data.email, data.password, {
+      // 1. Create auth user
+      const result = await signUp(data.email, data.password, {
         full_name: data.full_name,
         company_name: data.company_name,
       })
+
+      const authUser = result?.user
+      if (!authUser) throw new Error('Signup failed — no user returned')
+
+      // 2. Create company record
+      const { data: company, error: companyErr } = await supabase
+        .from('companies')
+        .insert({
+          company_name: data.company_name,
+          company_admin_email: data.email,
+          full_name: data.full_name,
+        })
+        .select('company_id')
+        .single()
+
+      if (companyErr) throw new Error('Failed to create company: ' + companyErr.message)
+
+      // 3. Create recruiter profile linking auth user to company
+      const { error: profileErr } = await supabase
+        .from('recruiter_profiles')
+        .upsert({
+          id: authUser.id,
+          company_id: company.company_id,
+          full_name: data.full_name,
+          email: data.email,
+          role: 'admin',
+        }, { onConflict: 'id' })
+
+      if (profileErr) throw new Error('Failed to create profile: ' + profileErr.message)
+
       setSuccess(true)
       setTimeout(() => navigate('/', { replace: true }), 1500)
     } catch (err) {
