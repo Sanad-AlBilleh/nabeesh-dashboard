@@ -25,6 +25,7 @@ import ActionUnitBreakdown from '../components/ActionUnitBreakdown'
 import PersonalityRadar from '../components/RadarChart'
 import { fetchApplication, deriveStage, STAGE_LABELS, STAGE_ORDER } from '../lib/db'
 import { supabase } from '../lib/supabase'
+import { triggerStage3 } from '../lib/api'
 
 // ─── Constants ─────────────────────────────────────────────────
 
@@ -339,6 +340,19 @@ export default function CandidateDetail() {
                 interviewScores={interviewScores}
                 facialAnalysis={facialAnalysis}
                 currentStage={currentStage}
+                onRefresh={() => {
+                  fetchApplication(id).then(result => {
+                    setApplication(result.application)
+                    setCandidate(result.candidate)
+                    setJob(result.job)
+                    setStage1(result.stage1)
+                    setStage2(result.stage2)
+                    setStage3(result.stage3)
+                    setInterview(result.interview)
+                    setInterviewScores(result.interviewScores)
+                    setFacialAnalysis(result.facialAnalysis)
+                  }).catch(err => console.error('Refresh failed:', err))
+                }}
               />
             )}
             {activeNav === 'ai_assessment' && (
@@ -492,9 +506,89 @@ function SummaryTab({
   )
 }
 
+// ─── Promote to Stage 3 Button ─────────────────────────────────
+
+function PromoteToStage3Button({ jobId, onSuccess }) {
+  const [loading, setLoading] = useState(false)
+  const [done, setDone] = useState(false)
+  const [error, setError] = useState(null)
+
+  async function handlePromote() {
+    setLoading(true)
+    setError(null)
+    try {
+      const result = await triggerStage3(jobId)
+      console.log('Stage 3 triggered:', result)
+      setDone(true)
+      onSuccess?.()
+    } catch (err) {
+      setError(err.message || 'Failed to trigger Stage 3')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (done) {
+    return (
+      <div style={{
+        padding: '12px 16px',
+        background: 'rgba(34,197,94,0.1)',
+        border: '1px solid rgba(34,197,94,0.25)',
+        borderRadius: 8,
+        color: '#22c55e',
+        fontSize: 13,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+        marginBottom: 12,
+      }}>
+        ✓ Stage 3 (LLM Evaluation) triggered successfully. Processing in background.
+      </div>
+    )
+  }
+
+  return (
+    <div style={{
+      padding: '16px',
+      background: 'rgba(99,102,241,0.08)',
+      border: '1px solid rgba(99,102,241,0.2)',
+      borderRadius: 8,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 10,
+      marginBottom: 12,
+    }}>
+      <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+        This candidate passed Semantic Similarity and is waiting for LLM Evaluation (Stage 3).
+      </div>
+      {error && (
+        <div style={{ fontSize: 12, color: '#ef4444' }}>{error}</div>
+      )}
+      <button
+        onClick={handlePromote}
+        disabled={loading}
+        style={{
+          padding: '9px 18px',
+          background: loading ? 'var(--bg-tertiary)' : 'var(--accent)',
+          color: loading ? 'var(--text-muted)' : '#fff',
+          border: 'none',
+          borderRadius: 7,
+          fontSize: 13,
+          fontWeight: 600,
+          cursor: loading ? 'not-allowed' : 'pointer',
+          alignSelf: 'flex-start',
+          transition: 'all 0.15s ease',
+        }}
+      >
+        {loading ? 'Triggering Stage 3…' : 'Promote to LLM Evaluation'}
+      </button>
+    </div>
+  )
+}
+
 // ─── Pipeline Tab ──────────────────────────────────────────────
 
-function PipelineTab({ application, stage1, stage2, stage3, interview, interviewScores, facialAnalysis, currentStage }) {
+function PipelineTab({ application, stage1, stage2, stage3, interview, interviewScores, facialAnalysis, currentStage, onRefresh }) {
   const [expandedInfo, setExpandedInfo] = useState({})
 
   function getStageData(stageKey) {
@@ -637,7 +731,17 @@ function PipelineTab({ application, stage1, stage2, stage3, interview, interview
               )}
               {meta.key === 'hard_filters' && <HardFiltersContent stage1={stage1} />}
               {meta.key === 'semantic_similarity' && <SemanticContent stage2={stage2} />}
-              {meta.key === 'llm_evaluation' && <LLMContent stage3={stage3} />}
+              {meta.key === 'llm_evaluation' && (
+                <>
+                  {application?.status === 'stage3_waiting' && (
+                    <PromoteToStage3Button
+                      jobId={application.job_id}
+                      onSuccess={onRefresh}
+                    />
+                  )}
+                  <LLMContent stage3={stage3} />
+                </>
+              )}
               {meta.key === 'video_interview' && <VideoInterviewContent interview={interview} interviewScores={interviewScores} />}
               {meta.key === 'hired' && (
                 application.status === 'hired'

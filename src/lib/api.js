@@ -132,6 +132,10 @@ export const testIntegration = (id) => post(`/api/integrations/test/${id}`)
 // ─── Career Page ──────────────────────────────────────────────
 export const updateCareerPage = (data) => put('/api/career-page', data)
 
+// ─── Pipeline Triggers ─────────────────────────────────────────
+export const triggerStage3 = (jobId, topPercent = 1.0) =>
+  post('/api/trigger-stage3', { job_id: Number(jobId), top_percent: topPercent })
+
 // ─── Facial Analysis ─────────────────────────────────────────
 export const getFacialAnalysis = (interviewId) => get(`/api/facial-analysis/${interviewId}`)
 export const triggerFacialAnalysis = (interviewId) => post(`/api/facial-analysis/${interviewId}/analyze`)

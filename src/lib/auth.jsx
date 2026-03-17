@@ -47,11 +47,17 @@ export function AuthProvider({ children }) {
     try {
       const { data: prof } = await supabase
         .from('recruiter_profiles')
-        .select('*')
+        .select('*, companies(*)')
         .eq('id', userId)
         .maybeSingle()
       setProfile(prof || null)
-      setCompany(prof?.company_id ? { id: prof.company_id, name: prof.company_name } : null)
+      if (prof?.companies) {
+        setCompany({ id: prof.company_id, name: prof.companies.company_name, ...prof.companies })
+      } else if (prof?.company_id) {
+        setCompany({ id: prof.company_id, name: null })
+      } else {
+        setCompany(null)
+      }
     } catch (err) {
       console.warn('Profile not found:', err.message)
     } finally {

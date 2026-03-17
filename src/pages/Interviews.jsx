@@ -1,37 +1,131 @@
-import React, { useState } from 'react'
-import { Calendar, List, Plus, Video, Phone, Clock, ExternalLink, User } from 'lucide-react'
-import { format, isToday, isTomorrow, isPast, isAfter } from 'date-fns'
+import React, { useState, useEffect } from 'react'
+import { Calendar, List, Plus, Video, Phone, Clock, ExternalLink, User, AlertCircle } from 'lucide-react'
+import { format, isToday, isTomorrow, isPast, isAfter, startOfMonth, endOfMonth, eachDayOfInterval, getDay } from 'date-fns'
 import Layout, { PageHeader } from '../components/Layout'
 import Badge from '../components/Badge'
 import Modal from '../components/Modal'
 import EmptyState from '../components/EmptyState'
-
-const now = new Date('2026-03-16T10:00:00')
-
-const MOCK_INTERVIEWS = [
-  { id: '1', candidate: 'Jordan Lee', candidate_id: '5', job: 'Senior Backend Engineer', type: 'ai_voice', status: 'completed', scheduled_at: '2026-03-14T15:00:00', duration: 45, score: 94, transcript_available: true, meeting_link: null },
-  { id: '2', candidate: 'Sarah Chen', candidate_id: '2', job: 'Product Designer', type: 'ai_voice', status: 'completed', scheduled_at: '2026-03-13T11:00:00', duration: 40, score: 79, transcript_available: true, meeting_link: null },
-  { id: '3', candidate: 'Elena Vasquez', candidate_id: '9', job: 'Head of Marketing', type: 'live', status: 'scheduled', scheduled_at: '2026-03-17T14:00:00', duration: 60, score: null, transcript_available: false, meeting_link: 'https://cal.com/meeting/abc123' },
-  { id: '4', candidate: 'Marcus Johnson', candidate_id: '1', job: 'Senior Backend Engineer', type: 'live', status: 'scheduled', scheduled_at: '2026-03-18T10:00:00', duration: 60, score: null, transcript_available: false, meeting_link: 'https://cal.com/meeting/def456' },
-  { id: '5', candidate: 'Wei Zhang', candidate_id: '10', job: 'ML Engineer', type: 'ai_voice', status: 'completed', scheduled_at: '2026-03-15T16:00:00', duration: 42, score: 88, transcript_available: true, meeting_link: null },
-  { id: '6', candidate: 'Priya Patel', candidate_id: '4', job: 'Data Scientist', type: 'ai_voice', status: 'scheduled', scheduled_at: '2026-03-19T09:00:00', duration: 40, score: null, transcript_available: false, meeting_link: null },
-  { id: '7', candidate: 'Aisha Kofi', candidate_id: '13', job: 'Product Designer', type: 'live', status: 'completed', scheduled_at: '2026-03-12T14:00:00', duration: 55, score: 82, transcript_available: true, meeting_link: null },
-]
+import { SkeletonTable } from '../components/LoadingSpinner'
+import LoadingSpinner from '../components/LoadingSpinner'
+import { useAuth } from '../lib/auth'
+import { supabase } from '../lib/supabase'
 
 export default function Interviews() {
+  const { company } = useAuth()
+  const [interviews, setInterviews] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [view, setView] = useState('list')
   const [scheduleOpen, setScheduleOpen] = useState(false)
   const [form, setForm] = useState({ candidate: '', job: '', date: '', time: '', duration: 60, type: 'ai_voice' })
 
-  const upcoming = MOCK_INTERVIEWS.filter(i => i.status === 'scheduled').sort((a, b) => new Date(a.scheduled_at) - new Date(b.scheduled_at))
-  const past = MOCK_INTERVIEWS.filter(i => i.status === 'completed').sort((a, b) => new Date(b.scheduled_at) - new Date(a.scheduled_at))
+  useEffect(() => {
+    if (!company?.id) return
+    fetchInterviews()
+  }, [company?.id])
+
+  async function fetchInterviews() {
+    setLoading(true)
+    setError(null)
+    try {
+      // First get job IDs for this company
+      const { data: jobs, error: jobsError } = await supabase
+        .from('jobs')
+        .select('job_id')
+        .eq('company_id', company.id)
+
+      if (jobsError) throw jobsError
+
+      const jobIds = (jobs || []).map(j => j.job_id)
+
+      if (jobIds.length === 0) {
+        setInterviews([])
+        setLoading(false)
+        return
+      }
+
+      const { data, error: fetchError } = await supabase
+        .from('interviews')
+        .select(`
+          interview_id, status, started_at, completed_at, duration_seconds,
+          interview_link, scheduled_at, created_at,
+          candidates(full_name, email),
+          jobs(title),
+          interview_scores(stage6_score, final_composite)
+        `)
+        .in('job_id', jobIds)
+        .order('created_at', { ascending: false })
+
+      if (fetchError) throw fetchError
+      setInterviews(data || [])
+    } catch (err) {
+      console.error('Failed to fetch interviews:', err)
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function getCandidateName(iv) {
+    return iv.candidates?.full_name || ''
+  }
+
+  function getJobTitle(iv) {
+    return iv.jobs?.title || ''
+  }
+
+  function getInitials(name) {
+    if (!name) return ''
+    return name.split(' ').map(n => n[0]).join('')
+  }
+
+  function getDuration(iv) {
+    if (iv.duration_seconds) return Math.round(iv.duration_seconds / 60)
+    return null
+  }
+
+  function getScore(iv) {
+    return iv.interview_scores?.[0]?.stage6_score || iv.interview_scores?.[0]?.final_composite || null
+  }
+
+  function getInterviewDate(iv) {
+    return iv.scheduled_at || iv.started_at || iv.created_at
+  }
+
+  function getInterviewType(iv) {
+    // Determine type from interview_link presence
+    if (iv.interview_link && (iv.interview_link.includes('cal.com') || iv.interview_link.includes('zoom') || iv.interview_link.includes('meet'))) {
+      return 'live'
+    }
+    return 'ai_voice'
+  }
+
+  const upcoming = interviews.filter(i => i.status === 'scheduled' || i.status === 'pending').sort((a, b) => {
+    const dateA = getInterviewDate(a)
+    const dateB = getInterviewDate(b)
+    return new Date(dateA) - new Date(dateB)
+  })
+
+  const past = interviews.filter(i => i.status === 'completed').sort((a, b) => {
+    const dateA = getInterviewDate(a)
+    const dateB = getInterviewDate(b)
+    return new Date(dateB) - new Date(dateA)
+  })
 
   function getRelativeDate(dateStr) {
+    if (!dateStr) return ''
     const d = new Date(dateStr)
     if (isToday(d)) return 'Today'
     if (isTomorrow(d)) return 'Tomorrow'
     return format(d, 'MMM d, yyyy')
   }
+
+  // Calendar view: current month
+  const now = new Date()
+  const monthStart = startOfMonth(now)
+  const monthEnd = endOfMonth(now)
+  const daysInMonth = eachDayOfInterval({ start: monthStart, end: monthEnd })
+  const startDayOfWeek = getDay(monthStart) // 0=Sun
 
   return (
     <Layout>
@@ -55,7 +149,18 @@ export default function Interviews() {
       />
 
       <div style={{ padding: '20px 28px' }}>
-        {view === 'list' && (
+        {/* Error state */}
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, marginBottom: 16 }}>
+            <AlertCircle size={14} color="var(--danger)" />
+            <span style={{ fontSize: 13, color: 'var(--danger)' }}>Failed to load interviews: {error}</span>
+            <button onClick={fetchInterviews} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', fontSize: 12 }}>Retry</button>
+          </div>
+        )}
+
+        {loading ? (
+          <LoadingSpinner fullPage />
+        ) : view === 'list' ? (
           <>
             {/* Upcoming */}
             <div style={{ marginBottom: 28 }}>
@@ -69,7 +174,7 @@ export default function Interviews() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {upcoming.map(interview => (
-                    <InterviewCard key={interview.id} interview={interview} getRelativeDate={getRelativeDate} />
+                    <InterviewCard key={interview.interview_id} interview={interview} getRelativeDate={getRelativeDate} getCandidateName={getCandidateName} getJobTitle={getJobTitle} getDuration={getDuration} getInterviewDate={getInterviewDate} getInterviewType={getInterviewType} />
                   ))}
                 </div>
               )}
@@ -80,80 +185,96 @@ export default function Interviews() {
               <h3 style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>
                 Completed ({past.length})
               </h3>
-              <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Candidate</th>
-                      <th>Job</th>
-                      <th>Type</th>
-                      <th>Date</th>
-                      <th>Duration</th>
-                      <th>Score</th>
-                      <th>Transcript</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {past.map(i => (
-                      <tr key={i.id}>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                            <div style={{ width: 26, height: 26, borderRadius: 6, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>
-                              {i.candidate.split(' ').map(n => n[0]).join('')}
-                            </div>
-                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{i.candidate}</span>
-                          </div>
-                        </td>
-                        <td style={{ fontSize: 12 }}>{i.job}</td>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
-                            {i.type === 'ai_voice' ? <Phone size={13} color="var(--accent)" /> : <Video size={13} color="var(--info)" />}
-                            <span style={{ fontSize: 12 }}>{i.type === 'ai_voice' ? 'AI Voice' : 'Live'}</span>
-                          </div>
-                        </td>
-                        <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
-                          {format(new Date(i.scheduled_at), 'MMM d, HH:mm')}
-                        </td>
-                        <td>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                            <Clock size={12} color="var(--text-muted)" />
-                            <span style={{ fontSize: 12 }}>{i.duration}m</span>
-                          </div>
-                        </td>
-                        <td>
-                          {i.score !== null ? (
-                            <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: i.score >= 80 ? 'var(--success)' : 'var(--accent)' }}>{i.score}</span>
-                          ) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
-                        </td>
-                        <td>
-                          {i.transcript_available ? (
-                            <button style={{ padding: '3px 10px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--accent)', fontSize: 11, fontWeight: 600 }}>
-                              View
-                            </button>
-                          ) : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>N/A</span>}
-                        </td>
+              {past.length === 0 ? (
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: 20 }}>
+                  <EmptyState icon={Calendar} title="No completed interviews" description="Completed interviews will appear here." />
+                </div>
+              ) : (
+                <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Candidate</th>
+                        <th>Job</th>
+                        <th>Type</th>
+                        <th>Date</th>
+                        <th>Duration</th>
+                        <th>Score</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                    </thead>
+                    <tbody>
+                      {past.map(i => {
+                        const candidateName = getCandidateName(i)
+                        const jobTitle = getJobTitle(i)
+                        const duration = getDuration(i)
+                        const score = getScore(i)
+                        const interviewDate = getInterviewDate(i)
+                        const interviewType = getInterviewType(i)
+
+                        return (
+                          <tr key={i.interview_id}>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                <div style={{ width: 26, height: 26, borderRadius: 6, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: 'var(--accent)' }}>
+                                  {getInitials(candidateName)}
+                                </div>
+                                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{candidateName}</span>
+                              </div>
+                            </td>
+                            <td style={{ fontSize: 12 }}>{jobTitle}</td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+                                {interviewType === 'ai_voice' ? <Phone size={13} color="var(--accent)" /> : <Video size={13} color="var(--info)" />}
+                                <span style={{ fontSize: 12 }}>{interviewType === 'ai_voice' ? 'AI Voice' : 'Live'}</span>
+                              </div>
+                            </td>
+                            <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
+                              {interviewDate ? format(new Date(interviewDate), 'MMM d, HH:mm') : '—'}
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                <Clock size={12} color="var(--text-muted)" />
+                                <span style={{ fontSize: 12 }}>{duration ? `${duration}m` : '—'}</span>
+                              </div>
+                            </td>
+                            <td>
+                              {score !== null ? (
+                                <span style={{ fontSize: 14, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: score >= 80 ? 'var(--success)' : 'var(--accent)' }}>{Math.round(score)}</span>
+                              ) : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>—</span>}
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             </div>
           </>
-        )}
-
-        {view === 'calendar' && (
+        ) : (
+          /* Calendar view */
           <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '20px', minHeight: 500 }}>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16, textAlign: 'center' }}>
+              {format(now, 'MMMM yyyy')}
+            </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1, marginBottom: 2 }}>
               {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map(d => (
                 <div key={d} style={{ padding: '8px 4px', textAlign: 'center', fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{d}</div>
               ))}
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: 1 }}>
-              {Array.from({ length: 35 }).map((_, i) => {
-                const dayNum = i - 6 + 1 // March 2026 starts on Sunday
-                const dateStr = dayNum > 0 && dayNum <= 31 ? `2026-03-${String(dayNum).padStart(2, '0')}` : null
-                const dayInterviews = dateStr ? MOCK_INTERVIEWS.filter(iv => iv.scheduled_at.startsWith(dateStr)) : []
-                const isCurrentDay = dayNum === 16
+              {/* Empty cells for days before month starts */}
+              {Array.from({ length: startDayOfWeek }).map((_, i) => (
+                <div key={`empty-${i}`} style={{ minHeight: 80, padding: '6px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6 }} />
+              ))}
+              {daysInMonth.map((day, i) => {
+                const dayNum = day.getDate()
+                const dateStr = format(day, 'yyyy-MM-dd')
+                const dayInterviews = interviews.filter(iv => {
+                  const ivDate = getInterviewDate(iv)
+                  return ivDate && ivDate.startsWith(dateStr)
+                })
+                const isCurrentDay = isToday(day)
 
                 return (
                   <div key={i} style={{
@@ -163,16 +284,12 @@ export default function Interviews() {
                     border: `1px solid ${isCurrentDay ? 'var(--accent)' : 'var(--border)'}`,
                     borderRadius: 6,
                   }}>
-                    {dayNum > 0 && dayNum <= 31 && (
-                      <>
-                        <span style={{ fontSize: 12, fontWeight: isCurrentDay ? 700 : 400, color: isCurrentDay ? 'var(--accent)' : 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>{dayNum}</span>
-                        {dayInterviews.map(iv => (
-                          <div key={iv.id} style={{ marginTop: 4, padding: '3px 5px', background: iv.status === 'completed' ? 'rgba(52,211,153,0.15)' : 'rgba(129,140,248,0.15)', borderRadius: 3, fontSize: 10, color: iv.status === 'completed' ? 'var(--success)' : 'var(--accent)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {iv.candidate.split(' ')[0]}
-                          </div>
-                        ))}
-                      </>
-                    )}
+                    <span style={{ fontSize: 12, fontWeight: isCurrentDay ? 700 : 400, color: isCurrentDay ? 'var(--accent)' : 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>{dayNum}</span>
+                    {dayInterviews.map(iv => (
+                      <div key={iv.interview_id} style={{ marginTop: 4, padding: '3px 5px', background: iv.status === 'completed' ? 'rgba(52,211,153,0.15)' : 'rgba(129,140,248,0.15)', borderRadius: 3, fontSize: 10, color: iv.status === 'completed' ? 'var(--success)' : 'var(--accent)', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {getCandidateName(iv).split(' ')[0] || 'Interview'}
+                      </div>
+                    ))}
                   </div>
                 )
               })}
@@ -236,10 +353,15 @@ export default function Interviews() {
   )
 }
 
-function InterviewCard({ interview, getRelativeDate }) {
-  const d = new Date(interview.scheduled_at)
-  const TypeIcon = interview.type === 'ai_voice' ? Phone : Video
-  const typeColor = interview.type === 'ai_voice' ? 'var(--accent)' : 'var(--info)'
+function InterviewCard({ interview, getRelativeDate, getCandidateName, getJobTitle, getDuration, getInterviewDate, getInterviewType }) {
+  const dateStr = getInterviewDate(interview)
+  const d = dateStr ? new Date(dateStr) : new Date()
+  const interviewType = getInterviewType(interview)
+  const TypeIcon = interviewType === 'ai_voice' ? Phone : Video
+  const typeColor = interviewType === 'ai_voice' ? 'var(--accent)' : 'var(--info)'
+  const candidateName = getCandidateName(interview)
+  const jobTitle = getJobTitle(interview)
+  const duration = getDuration(interview)
 
   return (
     <div style={{
@@ -263,25 +385,27 @@ function InterviewCard({ interview, getRelativeDate }) {
       <div style={{ width: 1, height: 48, background: 'var(--border)' }} />
       <div style={{ flex: 1 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{interview.candidate}</span>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>{candidateName}</span>
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>·</span>
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{interview.job}</span>
+          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{jobTitle}</span>
         </div>
         <div style={{ display: 'flex', gap: 12 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
             <TypeIcon size={12} color={typeColor} />
-            <span style={{ fontSize: 12, color: typeColor }}>{interview.type === 'ai_voice' ? 'AI Voice Interview' : 'Live Interview'}</span>
+            <span style={{ fontSize: 12, color: typeColor }}>{interviewType === 'ai_voice' ? 'AI Voice Interview' : 'Live Interview'}</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-            <Clock size={12} color="var(--text-muted)" />
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{interview.duration} min</span>
-          </div>
+          {duration && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+              <Clock size={12} color="var(--text-muted)" />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{duration} min</span>
+            </div>
+          )}
         </div>
       </div>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-        <Badge label={getRelativeDate(interview.scheduled_at)} variant="warning" size="sm" />
-        {interview.meeting_link && (
-          <a href={interview.meeting_link} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: 'var(--info)', color: '#fff', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
+        {dateStr && <Badge label={getRelativeDate(dateStr)} variant="warning" size="sm" />}
+        {interview.interview_link && (
+          <a href={interview.interview_link} target="_blank" rel="noopener noreferrer" style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', background: 'var(--info)', color: '#fff', borderRadius: 6, fontSize: 12, fontWeight: 600 }}>
             <ExternalLink size={12} /> Join
           </a>
         )}

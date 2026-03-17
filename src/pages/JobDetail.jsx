@@ -15,6 +15,7 @@ import PipelineFunnel from '../components/PipelineFunnel'
 import { PageLoader } from '../components/LoadingSpinner'
 import { supabase } from '../lib/supabase'
 import { fetchJobPipelineCandidates, STAGE_ORDER, STAGE_LABELS } from '../lib/queries/jobKanban'
+import { triggerStage3 } from '../lib/api'
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -371,8 +372,6 @@ function KanbanColumn({ stageKey, cards, onCardClick, onPromote, promoting }) {
 
 // ─── Pipeline Board Tab ──────────────────────────────────────────────────────
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080'
-
 function PipelineBoardTab({ jobId }) {
   const navigate = useNavigate()
   const [columns, setColumns] = useState(null)
@@ -383,14 +382,8 @@ function PipelineBoardTab({ jobId }) {
   async function handlePromote() {
     setPromoting(true)
     try {
-      const res = await fetch(`${API_BASE}/api/trigger-stage3`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job_id: Number(jobId) }),
-      })
-      const result = await res.json()
-      console.log('Promote result:', result)
-      // Refresh the board
+      await triggerStage3(jobId)
+      // Refresh board
       const { columns: fresh } = await fetchJobPipelineCandidates(jobId)
       setColumns(fresh)
     } catch (err) {
@@ -472,16 +465,33 @@ function PipelineBoardTab({ jobId }) {
 
 // ─── Distribution Tab ────────────────────────────────────────────────────────
 
-const MOCK_DISTRIBUTIONS = [
-  { platform: 'LinkedIn',     status: 'posted', url: 'https://linkedin.com/jobs/1234', posted_at: '2026-02-15' },
-  { platform: 'Indeed',       status: 'posted', url: 'https://indeed.com/job/5678',    posted_at: '2026-02-15' },
-  { platform: 'ZipRecruiter', status: 'failed', url: null, posted_at: null, error: 'Account not connected' },
-]
+function DistributionTab({ jobId }) {
+  const [distributions, setDistributions] = useState([])
+  const [loading, setLoading] = useState(true)
 
-function DistributionTab() {
+  useEffect(() => {
+    if (!jobId) return
+    supabase
+      .from('job_distributions')
+      .select('*')
+      .eq('job_id', jobId)
+      .then(({ data }) => { setDistributions(data || []); setLoading(false) })
+      .catch(() => setLoading(false))
+  }, [jobId])
+
+  if (loading) return <div style={{ color: 'var(--text-muted)', fontSize: 13, padding: '24px 0' }}>Loading…</div>
+
+  if (!distributions.length) {
+    return (
+      <div style={{ padding: '32px 0', textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+        No job distributions configured yet.
+      </div>
+    )
+  }
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 600 }}>
-      {MOCK_DISTRIBUTIONS.map(d => (
+      {distributions.map(d => (
         <div key={d.platform} style={{
           display: 'flex',
           alignItems: 'center',
@@ -746,7 +756,7 @@ export default function JobDetail() {
           <PipelineBoardTab jobId={jobId} />
         )}
         {tab === 'distribution' && (
-          <DistributionTab />
+          <DistributionTab jobId={jobId} />
         )}
         {tab === 'analytics' && (
           <AnalyticsTab columns={columns} />

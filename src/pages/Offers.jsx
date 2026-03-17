@@ -1,37 +1,96 @@
-import React, { useState } from 'react'
-import { Plus, FileText, Eye, Send, DollarSign } from 'lucide-react'
+import React, { useState, useEffect } from 'react'
+import { Plus, FileText, Eye, Send, DollarSign, AlertCircle } from 'lucide-react'
 import { format } from 'date-fns'
 import Layout, { PageHeader } from '../components/Layout'
 import Badge from '../components/Badge'
 import Modal from '../components/Modal'
 import SearchInput from '../components/SearchInput'
-
-const MOCK_OFFERS = [
-  { id: '1', candidate: 'Jordan Lee', candidate_id: '5', job: 'Senior Backend Engineer', salary: 165000, currency: 'USD', status: 'signed', sent_at: '2026-03-15', signed_at: '2026-03-16', expires_at: '2026-03-29', equity: '0.15%', start_date: '2026-04-14' },
-  { id: '2', candidate: 'Yuki Tanaka', candidate_id: '15', job: 'Data Scientist', salary: 142000, currency: 'USD', status: 'sent', sent_at: '2026-03-14', signed_at: null, expires_at: '2026-03-28', equity: '0.10%', start_date: '2026-04-21' },
-  { id: '3', candidate: 'Elena Vasquez', candidate_id: '9', job: 'Head of Marketing', salary: 155000, currency: 'USD', status: 'draft', sent_at: null, signed_at: null, expires_at: null, equity: '0.20%', start_date: null },
-  { id: '4', candidate: 'Marcus Johnson', candidate_id: '1', job: 'Senior Backend Engineer', salary: 158000, currency: 'USD', status: 'sent', sent_at: '2026-03-12', signed_at: null, expires_at: '2026-03-26', equity: '0.12%', start_date: '2026-04-15' },
-  { id: '5', candidate: 'Aisha Kofi', candidate_id: '13', job: 'Product Designer', salary: 128000, currency: 'USD', status: 'declined', sent_at: '2026-02-28', signed_at: null, expires_at: '2026-03-13', equity: '0.08%', start_date: null },
-  { id: '6', candidate: 'Noah Thompson', candidate_id: '12', job: 'Sales Executive', salary: 95000, currency: 'USD', status: 'expired', sent_at: '2026-02-20', signed_at: null, expires_at: '2026-03-06', equity: null, start_date: null },
-  { id: '7', candidate: 'Wei Zhang', candidate_id: '10', job: 'ML Engineer', salary: 172000, currency: 'USD', status: 'draft', sent_at: null, signed_at: null, expires_at: null, equity: '0.18%', start_date: null },
-]
+import EmptyState from '../components/EmptyState'
+import { SkeletonTable } from '../components/LoadingSpinner'
+import { useAuth } from '../lib/auth'
+import { supabase } from '../lib/supabase'
 
 export default function Offers() {
+  const { company } = useAuth()
+  const [offers, setOffers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [createOpen, setCreateOpen] = useState(false)
   const [viewOffer, setViewOffer] = useState(null)
 
-  const filtered = MOCK_OFFERS.filter(o => {
-    const matchSearch = !search || o.candidate.toLowerCase().includes(search.toLowerCase()) || o.job.toLowerCase().includes(search.toLowerCase())
+  useEffect(() => {
+    if (!company?.id) return
+    fetchOffers()
+  }, [company?.id])
+
+  async function fetchOffers() {
+    setLoading(true)
+    setError(null)
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('offers')
+        .select(`
+          id, status, created_at, sent_at, signed_at, declined_at, expires_at,
+          offer_data,
+          candidates(full_name, email),
+          jobs(title)
+        `)
+        .eq('company_id', company.id)
+        .order('created_at', { ascending: false })
+
+      if (fetchError) throw fetchError
+      setOffers(data || [])
+    } catch (err) {
+      console.error('Failed to fetch offers:', err)
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function getCandidateName(offer) {
+    return offer.candidates?.full_name || ''
+  }
+
+  function getJobTitle(offer) {
+    return offer.jobs?.title || ''
+  }
+
+  function getSalary(offer) {
+    return offer.offer_data?.salary || 0
+  }
+
+  function getCurrency(offer) {
+    return offer.offer_data?.currency || 'USD'
+  }
+
+  function getEquity(offer) {
+    return offer.offer_data?.equity || null
+  }
+
+  function getStartDate(offer) {
+    return offer.offer_data?.start_date || null
+  }
+
+  function getInitials(name) {
+    if (!name) return ''
+    return name.split(' ').map(n => n[0]).join('')
+  }
+
+  const filtered = offers.filter(o => {
+    const candidateName = getCandidateName(o)
+    const jobTitle = getJobTitle(o)
+    const matchSearch = !search || candidateName.toLowerCase().includes(search.toLowerCase()) || jobTitle.toLowerCase().includes(search.toLowerCase())
     const matchStatus = statusFilter === 'all' || o.status === statusFilter
     return matchSearch && matchStatus
   })
 
   const statusCounts = {}
-  MOCK_OFFERS.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1 })
-  const signed = MOCK_OFFERS.filter(o => o.status === 'signed').length
-  const pending = MOCK_OFFERS.filter(o => ['sent', 'draft'].includes(o.status)).length
+  offers.forEach(o => { statusCounts[o.status] = (statusCounts[o.status] || 0) + 1 })
+  const signed = offers.filter(o => o.status === 'signed').length
+  const pending = offers.filter(o => ['sent', 'draft'].includes(o.status)).length
 
   return (
     <Layout>
@@ -54,19 +113,28 @@ export default function Offers() {
       <div style={{ padding: '12px 28px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 0, background: 'var(--bg-primary)' }}>
         {[['all', 'All'], ['draft', 'Draft'], ['sent', 'Sent'], ['signed', 'Signed'], ['declined', 'Declined'], ['expired', 'Expired']].map(([val, lbl]) => (
           <button key={val} onClick={() => setStatusFilter(val)} style={{ padding: '6px 14px', background: statusFilter === val ? 'var(--bg-tertiary)' : 'transparent', border: '1px solid', borderColor: statusFilter === val ? 'var(--border)' : 'transparent', borderRadius: 6, color: statusFilter === val ? 'var(--text-primary)' : 'var(--text-muted)', fontSize: 12, fontWeight: statusFilter === val ? 600 : 400, marginRight: 2 }}>
-            {lbl} {statusCounts[val] && <span style={{ opacity: 0.6 }}>({statusCounts[val]})</span>}
+            {lbl} {statusCounts[val] ? <span style={{ opacity: 0.6 }}>({statusCounts[val]})</span> : null}
           </button>
         ))}
       </div>
 
       <div style={{ padding: '16px 28px' }}>
+        {/* Error state */}
+        {error && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '12px 16px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, marginBottom: 16 }}>
+            <AlertCircle size={14} color="var(--danger)" />
+            <span style={{ fontSize: 13, color: 'var(--danger)' }}>Failed to load offers: {error}</span>
+            <button onClick={fetchOffers} style={{ marginLeft: 'auto', padding: '4px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 5, color: 'var(--text-secondary)', fontSize: 12 }}>Retry</button>
+          </div>
+        )}
+
         {/* Summary cards */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginBottom: 20 }}>
           {[
-            { label: 'Total Offers', value: MOCK_OFFERS.length, color: 'var(--text-secondary)' },
+            { label: 'Total Offers', value: offers.length, color: 'var(--text-secondary)' },
             { label: 'Signed', value: signed, color: 'var(--success)' },
             { label: 'Pending', value: pending, color: 'var(--warning)' },
-            { label: 'Declined', value: MOCK_OFFERS.filter(o => o.status === 'declined').length, color: 'var(--danger)' },
+            { label: 'Declined', value: offers.filter(o => o.status === 'declined').length, color: 'var(--danger)' },
           ].map(s => (
             <div key={s.label} style={{ padding: '14px 16px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
               <div style={{ fontSize: 22, fontWeight: 700, color: s.color, fontFamily: 'Geist Mono, monospace' }}>{s.value}</div>
@@ -90,43 +158,65 @@ export default function Offers() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(offer => (
-                <tr key={offer.id} style={{ cursor: 'pointer' }} onClick={() => setViewOffer(offer)}>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'var(--accent)', flexShrink: 0 }}>
-                        {offer.candidate.split(' ').map(n => n[0]).join('')}
-                      </div>
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{offer.candidate}</span>
-                    </div>
-                  </td>
-                  <td style={{ fontSize: 12 }}>{offer.job}</td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                      <DollarSign size={12} color="var(--success)" />
-                      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Geist Mono, monospace' }}>
-                        {offer.salary.toLocaleString()}
-                      </span>
-                      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{offer.currency}/yr</span>
-                    </div>
-                  </td>
-                  <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{offer.equity || '—'}</td>
-                  <td><Badge status={offer.status} dot /></td>
-                  <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>{offer.sent_at ? format(new Date(offer.sent_at), 'MMM d') : '—'}</td>
-                  <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
-                    {offer.signed_at ? <span style={{ color: 'var(--success)' }}>{format(new Date(offer.signed_at), 'MMM d')}</span> :
-                      offer.expires_at ? format(new Date(offer.expires_at), 'MMM d') : '—'}
-                  </td>
-                  <td onClick={e => e.stopPropagation()}>
-                    <div style={{ display: 'flex', gap: 4 }}>
-                      <TinyBtn onClick={() => setViewOffer(offer)} title="View"><Eye size={12} /></TinyBtn>
-                      {offer.status === 'draft' && (
-                        <TinyBtn onClick={() => {}} title="Send" color="var(--accent)"><Send size={12} /></TinyBtn>
-                      )}
-                    </div>
+              {loading ? (
+                <SkeletonTable rows={6} cols={8} />
+              ) : filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+                    <EmptyState icon={FileText} title="No offers found" description="Create an offer to extend to a candidate." action={
+                      <button onClick={() => setCreateOpen(true)} style={{ padding: '8px 16px', background: 'var(--accent)', color: '#fff', borderRadius: 6, fontSize: 13 }}>
+                        Create Offer
+                      </button>
+                    } />
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filtered.map(offer => {
+                  const candidateName = getCandidateName(offer)
+                  const jobTitle = getJobTitle(offer)
+                  const salary = getSalary(offer)
+                  const currency = getCurrency(offer)
+                  const equity = getEquity(offer)
+
+                  return (
+                    <tr key={offer.id} style={{ cursor: 'pointer' }} onClick={() => setViewOffer(offer)}>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <div style={{ width: 28, height: 28, borderRadius: 7, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 11, fontWeight: 700, color: 'var(--accent)', flexShrink: 0 }}>
+                            {getInitials(candidateName)}
+                          </div>
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{candidateName}</span>
+                        </div>
+                      </td>
+                      <td style={{ fontSize: 12 }}>{jobTitle}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                          <DollarSign size={12} color="var(--success)" />
+                          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', fontFamily: 'Geist Mono, monospace' }}>
+                            {salary ? salary.toLocaleString() : '—'}
+                          </span>
+                          {salary ? <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{currency}/yr</span> : null}
+                        </div>
+                      </td>
+                      <td style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{equity || '—'}</td>
+                      <td><Badge status={offer.status} dot /></td>
+                      <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>{offer.sent_at ? format(new Date(offer.sent_at), 'MMM d') : '—'}</td>
+                      <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
+                        {offer.signed_at ? <span style={{ color: 'var(--success)' }}>{format(new Date(offer.signed_at), 'MMM d')}</span> :
+                          offer.expires_at ? format(new Date(offer.expires_at), 'MMM d') : '—'}
+                      </td>
+                      <td onClick={e => e.stopPropagation()}>
+                        <div style={{ display: 'flex', gap: 4 }}>
+                          <TinyBtn onClick={() => setViewOffer(offer)} title="View"><Eye size={12} /></TinyBtn>
+                          {offer.status === 'draft' && (
+                            <TinyBtn onClick={() => {}} title="Send" color="var(--accent)"><Send size={12} /></TinyBtn>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -152,14 +242,14 @@ export default function Offers() {
         {viewOffer && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <div style={{ padding: '16px', background: 'var(--bg-tertiary)', borderRadius: 8 }}>
-              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{viewOffer.candidate}</div>
-              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{viewOffer.job}</div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>{getCandidateName(viewOffer)}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>{getJobTitle(viewOffer)}</div>
               <div style={{ marginTop: 10 }}><Badge status={viewOffer.status} dot size="md" /></div>
             </div>
             {[
-              ['Salary', `$${viewOffer.salary.toLocaleString()} ${viewOffer.currency}/year`],
-              ['Equity', viewOffer.equity || 'None'],
-              ['Start Date', viewOffer.start_date ? format(new Date(viewOffer.start_date), 'MMMM d, yyyy') : 'TBD'],
+              ['Salary', getSalary(viewOffer) ? `$${getSalary(viewOffer).toLocaleString()} ${getCurrency(viewOffer)}/year` : '—'],
+              ['Equity', getEquity(viewOffer) || 'None'],
+              ['Start Date', getStartDate(viewOffer) ? format(new Date(getStartDate(viewOffer)), 'MMMM d, yyyy') : 'TBD'],
               ['Offer Sent', viewOffer.sent_at ? format(new Date(viewOffer.sent_at), 'MMMM d, yyyy') : 'Not sent yet'],
               ['Expires', viewOffer.expires_at ? format(new Date(viewOffer.expires_at), 'MMMM d, yyyy') : '—'],
               ['Signed', viewOffer.signed_at ? format(new Date(viewOffer.signed_at), 'MMMM d, yyyy') : '—'],
