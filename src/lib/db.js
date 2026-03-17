@@ -5,7 +5,7 @@ export function deriveStage(status, pipeline_stage) {
   if (status === 'hired') return 'hired'
   if (['interview_completed', 'scored'].includes(status)) return 'video_interview'
   if (status === 'interview_pending' || pipeline_stage === 'stage5_interview') return 'video_interview'
-  if (status === 'stage3_waiting' || pipeline_stage === 'stage3_waiting') return 'llm_evaluation'
+  if (status === 'stage3_waiting' || pipeline_stage === 'stage3_waiting') return 'semantic_similarity'
   if (status === 'screen_rejected' && pipeline_stage === 'completed') return 'semantic_similarity'
   if (status === 'screen_rejected') return 'hard_filters'
   return 'applied'
