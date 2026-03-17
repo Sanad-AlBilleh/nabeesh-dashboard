@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import {
   Edit2, ChevronLeft, MapPin, Briefcase, DollarSign,
   CheckCircle, XCircle, AlertCircle, ExternalLink,
-  BarChart2, Columns, Users,
+  BarChart2, Columns, Users, Play,
 } from 'lucide-react'
 import { format, formatDistanceToNow } from 'date-fns'
 import {
@@ -216,10 +216,11 @@ const STAGE_ACCENT = {
   hired:           { color: '#22c55e', bg: 'rgba(34,197,94,0.1)',   border: 'rgba(34,197,94,0.2)'   },
 }
 
-function KanbanColumn({ stageKey, cards, onCardClick }) {
+function KanbanColumn({ stageKey, cards, onCardClick, onPromote, promoting }) {
   const label = STAGE_LABELS[stageKey]
   const accent = STAGE_ACCENT[stageKey] || STAGE_ACCENT.applied
   const count = cards.length
+  const hasWaiting = stageKey === 'semantic' && cards.some(a => (a.status || '').includes('stage3_waiting'))
 
   return (
     <div style={{
@@ -274,6 +275,34 @@ function KanbanColumn({ stageKey, cards, onCardClick }) {
         </span>
       </div>
 
+      {/* Promote button for stage3_waiting candidates */}
+      {hasWaiting && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onPromote?.() }}
+          disabled={promoting}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 6,
+            width: '100%',
+            padding: '8px 12px',
+            background: promoting ? 'rgba(99,102,241,0.1)' : 'rgba(34,197,94,0.12)',
+            color: promoting ? 'var(--text-muted)' : '#22c55e',
+            border: `1px solid ${promoting ? 'var(--border)' : 'rgba(34,197,94,0.3)'}`,
+            borderTop: 'none',
+            borderBottom: 'none',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: promoting ? 'not-allowed' : 'pointer',
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Play size={12} />
+          {promoting ? 'Promoting…' : 'Promote to LLM Evaluation'}
+        </button>
+      )}
+
       {/* Top accent bar */}
       <div style={{ height: 2, background: accent.color, opacity: 0.6 }} />
 
@@ -323,11 +352,35 @@ function KanbanColumn({ stageKey, cards, onCardClick }) {
 
 // ─── Pipeline Board Tab ──────────────────────────────────────────────────────
 
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:8080'
+
 function PipelineBoardTab({ jobId }) {
   const navigate = useNavigate()
   const [columns, setColumns] = useState(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [promoting, setPromoting] = useState(false)
+
+  async function handlePromote() {
+    setPromoting(true)
+    try {
+      const res = await fetch(`${API_BASE}/api/trigger-stage3`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ job_id: Number(jobId) }),
+      })
+      const result = await res.json()
+      console.log('Promote result:', result)
+      // Refresh the board
+      const { columns: fresh } = await fetchJobPipelineCandidates(jobId)
+      setColumns(fresh)
+    } catch (err) {
+      console.error('Promote failed:', err)
+      alert('Failed to promote candidates: ' + (err.message || 'Unknown error'))
+    } finally {
+      setPromoting(false)
+    }
+  }
 
   useEffect(() => {
     if (!jobId) return
@@ -389,6 +442,8 @@ function PipelineBoardTab({ jobId }) {
             stageKey={stageKey}
             cards={columns?.[stageKey] || []}
             onCardClick={(applicationId) => navigate(`/candidates/${applicationId}`)}
+            onPromote={handlePromote}
+            promoting={promoting}
           />
         ))}
       </div>

@@ -7,6 +7,7 @@ export function deriveStage(status, pipeline_stage) {
   if (ps.includes('stage6') || ps.includes('video') || ps.includes('interview')) return 'video_interview'
   if (ps.includes('stage3') || ps.includes('llm')) return 'llm_evaluation'
   if (ps.includes('stage2') || ps.includes('semantic')) return 'semantic'
+  if (s === 'stage3_waiting' || ps === 'stage3_waiting') return 'semantic'
   if (ps.includes('stage1') || ps.includes('hard') || ps.includes('filter')) return 'hard_filters'
   if (s === 'rejected' || s === 'withdrawn') return 'applied'
   return 'applied'
