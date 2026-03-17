@@ -28,10 +28,15 @@ export function AuthProvider({ children }) {
       })
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+    // NOTE: Do NOT call supabase.auth.getSession() synchronously inside this callback.
+    // Supabase SDK v2.x holds an exclusive Web Lock while firing onAuthStateChange, so
+    // calling getSession() (which also acquires that lock) causes a deadlock — the app
+    // freezes on "Signing in..." indefinitely. setTimeout(0) defers the call until
+    // after the lock is released.
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        await loadProfile().catch(console.error)
+        setTimeout(() => loadProfile().catch(console.error), 0)
       } else {
         setProfile(null)
         setCompany(null)
