@@ -170,6 +170,25 @@ function CandidateCard({ app, onClick }) {
         </div>
       )}
 
+      {/* Awaiting LLM eval badge */}
+      {app.status === 'stage3_waiting' && (
+        <div style={{
+          fontSize: 10,
+          fontWeight: 600,
+          padding: '2px 8px',
+          background: 'rgba(245,158,11,0.12)',
+          color: '#f59e0b',
+          border: '1px solid rgba(245,158,11,0.25)',
+          borderRadius: 4,
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: 4,
+          alignSelf: 'flex-start',
+        }}>
+          ⏳ Awaiting LLM Evaluation
+        </div>
+      )}
+
       {/* Skills */}
       {visibleSkills.length > 0 && (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -220,7 +239,7 @@ function KanbanColumn({ stageKey, cards, onCardClick, onPromote, promoting }) {
   const label = STAGE_LABELS[stageKey]
   const accent = STAGE_ACCENT[stageKey] || STAGE_ACCENT.applied
   const count = cards.length
-  const hasWaiting = stageKey === 'semantic' && cards.some(a => (a.status || '').includes('stage3_waiting'))
+  const hasWaiting = stageKey === 'llm_evaluation' && cards.some(a => (a.status || '') === 'stage3_waiting')
 
   return (
     <div style={{
