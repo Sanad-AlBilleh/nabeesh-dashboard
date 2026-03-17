@@ -2,11 +2,11 @@ import React, { useState, useEffect } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import {
   ChevronLeft, Mail, Phone, MapPin, Download, Send, Star, XCircle,
-  Calendar, ClipboardList, MessageSquare, FileText, Plus, Clock,
+  Calendar, ClipboardList, MessageSquare, FileText, Clock,
   CheckCircle, AlertCircle, Circle, Info, ChevronDown, ChevronUp,
-  Brain, Eye, Mic, Video, BarChart3, Zap, Shield, Heart, Target,
-  Activity, TrendingUp, User, Bot, AlertTriangle, Sparkles, Globe,
-  BookOpen, Pen, Headphones, Play,
+  Brain, Eye, Video, BarChart3, Zap, Shield, Heart, Target,
+  Activity, TrendingUp, User, Bot, AlertTriangle, Sparkles,
+  BookOpen, Play, ExternalLink,
 } from 'lucide-react'
 import {
   RadarChart as RechartsRadar, Radar, PolarGrid, PolarAngleAxis,
@@ -16,8 +16,6 @@ import Layout, { PageHeader } from '../components/Layout'
 import Badge from '../components/Badge'
 import ScoreBar from '../components/ScoreBar'
 import ScoreCircle from '../components/ScoreCircle'
-import PersonalityRadar from '../components/RadarChart'
-import Timeline from '../components/Timeline'
 import TranscriptViewer from '../components/TranscriptViewer'
 import VideoPlayer from '../components/VideoPlayer'
 import FacialAnalysisCard from '../components/FacialAnalysisCard'
@@ -25,89 +23,59 @@ import ActionUnitBreakdown from '../components/ActionUnitBreakdown'
 import EmotionTimeline from '../components/EmotionTimeline'
 import EmptyState from '../components/EmptyState'
 import { PageLoader } from '../components/LoadingSpinner'
-import {
-  getCandidate, getAssessment, getInterview, getTranscript,
-  getFacialAnalysis, getApplication, addNote, getNotes,
-  shortlistApplication, rejectApplication,
-} from '../lib/api'
+import { fetchApplication, deriveStage, STAGE_LABELS, STAGE_ORDER } from '../lib/db'
 
-const gradeColors = { 'A+': '#34d399', 'A': '#34d399', 'A-': '#34d399', 'B+': '#60a5fa', 'B': '#818cf8', 'B-': '#818cf8', 'C+': '#fbbf24', 'C': '#fbbf24', 'D': '#fb923c', 'F': '#f87171' }
+const gradeColors = {
+  'A+': '#34d399', 'A': '#34d399', 'A-': '#34d399',
+  'B+': '#60a5fa', 'B': '#818cf8', 'B-': '#818cf8',
+  'C+': '#fbbf24', 'C': '#fbbf24',
+  'D': '#fb923c', 'F': '#f87171',
+}
 
 const STAGE_META = [
   {
-    key: 'cv_screening',
-    title: 'CV Screening',
+    key: 'applied',
+    title: 'Applied',
     icon: FileText,
-    description: 'AI analyzes the candidate\'s resume against job requirements using embedding similarity and keyword matching.',
-    methodology: 'Resume parsed \u2192 embedded with text-embedding-3-large \u2192 cosine similarity against job description \u2192 keyword overlap scoring \u2192 3-LLM jury vote on fit.',
+    description: 'Candidate submitted their application and CV.',
+    methodology: 'CV uploaded → parsed with AI → resume data extracted and stored.',
   },
   {
-    key: 'phone_screen',
-    title: 'AI Phone Screen',
-    icon: Phone,
-    description: 'Automated voice screening via Retell AI to assess basic qualifications and communication.',
-    methodology: 'AI conducts 5\u20137 minute voice conversation \u2192 transcript analyzed for relevance, clarity, and enthusiasm \u2192 3-LLM jury grades each answer.',
+    key: 'hard_filters',
+    title: 'Hard Filters',
+    icon: Shield,
+    description: 'Automated keyword and skill matching against mandatory job requirements.',
+    methodology: 'Required skills checked → experience years verified → education level validated → elimination if any hard requirement unmet.',
   },
   {
-    key: 'assessment',
-    title: 'Technical / Skills Assessment',
+    key: 'semantic_similarity',
+    title: 'Semantic Similarity',
     icon: Brain,
-    description: 'Cognitive aptitude, personality profiling, and language assessment.',
-    methodology: 'IPIP-NEO-120 Big Five personality (reverse-scored, normalized 0\u2013100), cognitive test (correct count + percentile via error function), language MCQ + LLM writing evaluation \u2192 CEFR level.',
+    description: 'Embedding-based similarity scoring between CV and job description.',
+    methodology: 'CV embedded with text-embedding-3-large → cosine similarity vs job description → skills/experience/education sub-scores → candidates ranked by total score.',
   },
   {
-    key: 'interview',
-    title: 'AI Interview',
+    key: 'llm_evaluation',
+    title: 'LLM Evaluation',
+    icon: Bot,
+    description: 'Multi-dimensional career trajectory assessment via 3-LLM jury.',
+    methodology: 'Jury of 3 LLMs evaluates: career trajectory, growth pattern, achievement quality, consistency → majority vote on pass/fail → grade A–F on each dimension.',
+  },
+  {
+    key: 'video_interview',
+    title: 'Video Interview + Analysis',
     icon: Video,
-    description: 'Full behavioral interview conducted by Nabeesh AI with video recording.',
-    methodology: '15\u201320 minute voice interview \u2192 transcript analyzed per question \u2192 3-LLM jury evaluates technical depth, communication, problem-solving \u2192 composite grade.',
+    description: 'AI-conducted video interview with real-time facial expression analysis.',
+    methodology: 'Retell AI conducts structured interview → transcript scored on relevance/depth/accuracy/communication → facial landmarks analyzed for confidence, engagement, stress tolerance → composite score.',
   },
   {
-    key: 'recruiter_review',
-    title: 'Recruiter Review',
-    icon: User,
-    description: 'Human recruiter reviews all AI-generated data and makes shortlist decision.',
-    methodology: 'Recruiter examines composite scores, AI summaries, interview transcript, and assessment results to make a final shortlist/reject decision.',
-  },
-  {
-    key: 'offer',
-    title: 'Offer',
-    icon: Send,
-    description: 'Offer letter generated and sent via DocuSign for e-signature.',
-    methodology: 'Offer parameters configured \u2192 letter generated from template \u2192 sent via DocuSign API \u2192 candidate signs electronically.',
+    key: 'hired',
+    title: 'Hired',
+    icon: CheckCircle,
+    description: 'Candidate accepted the offer and joined the company.',
+    methodology: 'Offer sent → signed → onboarding initiated.',
   },
 ]
-
-function getStageStatus(stage) {
-  if (!stage) return { color: '#3f3f46', label: 'Pending', bg: 'var(--bg-tertiary)' }
-  const s = stage.status?.toLowerCase()
-  if (s === 'pass' || s === 'completed' || s === 'success') return { color: '#34d399', label: 'Pass', bg: 'rgba(52,211,153,0.1)' }
-  if (s === 'fail' || s === 'failed' || s === 'rejected') return { color: '#f87171', label: 'Failed', bg: 'rgba(248,113,113,0.1)' }
-  if (s === 'in-progress' || s === 'in_progress' || s === 'active') return { color: '#fbbf24', label: 'In Progress', bg: 'rgba(251,191,36,0.1)' }
-  if (s === 'shortlisted') return { color: '#34d399', label: 'Shortlisted', bg: 'rgba(52,211,153,0.1)' }
-  return { color: '#3f3f46', label: stage.status || 'Pending', bg: 'var(--bg-tertiary)' }
-}
-
-// Mock data fallback for the 15 demo candidates used on the Candidates list page.
-// The list uses integer IDs ('1'-'15') which don't exist in the DB (which uses UUIDs),
-// so CandidateDetail falls back to this data instead of showing "Candidate not found".
-const MOCK_DETAILS = {
-  '1':  { id:'1', name:'Marcus Johnson',   email:'marcus@email.com',    phone:'+1 415 555 0181', location:'San Francisco, CA', current_title:'Senior Backend Engineer',  applied_for:'Senior Backend Engineer',  stage:'shortlisted', source:'linkedin',    composite_score:87, cv_score:89, phone_screen_score:84, assessment_score:85, interview_score:88, skills:['Node.js','PostgreSQL','AWS','Redis','Docker'],        created_at:'2026-03-15', summary:'Marcus is a strong backend engineer with 7 years of experience in distributed systems. Excellent technical depth and communication. Jury consensus: strong hire.' },
-  '2':  { id:'2', name:'Sarah Chen',        email:'sarah@email.com',     phone:'+1 650 555 0192', location:'New York, NY',       current_title:'Senior Product Designer',  applied_for:'Product Designer',         stage:'interview',   source:'indeed',      composite_score:79, cv_score:82, phone_screen_score:76, assessment_score:78, interview_score:80, skills:['Figma','UX Research','Prototyping','Design Systems','User Testing'], created_at:'2026-03-14', summary:'Sarah brings strong design thinking and a portfolio of high-impact product work. Good cultural fit. Jury recommends proceeding to final round.' },
-  '3':  { id:'3', name:'Ahmed Al-Rashid',   email:'ahmed@email.com',     phone:'+1 312 555 0103', location:'Chicago, IL',        current_title:'Backend Engineer',         applied_for:'Senior Backend Engineer',  stage:'screening',   source:'direct',      composite_score:72, cv_score:70, phone_screen_score:73, assessment_score:71, interview_score:74, skills:['Python','Django','Redis','Celery','PostgreSQL'],      created_at:'2026-03-13', summary:'Ahmed has solid Python/Django experience. Some gaps in system design at scale. Borderline decision — jury split 2-1 in favour of proceeding.' },
-  '4':  { id:'4', name:'Priya Patel',       email:'priya@email.com',     phone:'+1 206 555 0144', location:'Seattle, WA',        current_title:'Data Scientist',           applied_for:'Data Scientist',           stage:'applied',     source:'linkedin',    composite_score:68, cv_score:67, phone_screen_score:66, assessment_score:70, interview_score:null, skills:['Python','ML','TensorFlow','Scikit-learn','SQL'],      created_at:'2026-03-12', summary:'Priya has good fundamentals in ML but limited production deployment experience. Assessment not yet completed. Worth a phone screen.' },
-  '5':  { id:'5', name:'Jordan Lee',        email:'jordan@email.com',    phone:'+1 512 555 0175', location:'Austin, TX',         current_title:'Staff Engineer',           applied_for:'Senior Backend Engineer',  stage:'shortlisted', source:'ziprecruiter',composite_score:91, cv_score:93, phone_screen_score:90, assessment_score:89, interview_score:92, skills:['Go','Kubernetes','gRPC','Terraform','AWS'],           created_at:'2026-03-11', summary:'Jordan is an exceptional systems engineer. Top performer in all evaluation stages. Jury unanimous: strong hire. Recommend fast-tracking to offer.' },
-  '6':  { id:'6', name:'Emma Wilson',       email:'emma@email.com',      phone:'+1 617 555 0106', location:'Boston, MA',         current_title:'Frontend Developer',       applied_for:'Frontend Engineer',        stage:'applied',     source:'indeed',      composite_score:55, cv_score:54, phone_screen_score:56, assessment_score:53, interview_score:null, skills:['React','TypeScript','CSS','HTML'],                    created_at:'2026-03-13', summary:'Emma has 2 years of frontend experience. Strong in React but limited TypeScript depth. Assessment pending. Junior-to-mid level fit.' },
-  '7':  { id:'7', name:"Liam O'Brien",      email:'liam@email.com',      phone:'+1 720 555 0137', location:'Denver, CO',         current_title:'DevOps Engineer',          applied_for:'DevOps Engineer',          stage:'screening',   source:'direct',      composite_score:63, cv_score:61, phone_screen_score:65, assessment_score:62, interview_score:null, skills:['Terraform','AWS','Docker','CI/CD','Prometheus'],      created_at:'2026-03-10', summary:'Liam has practical DevOps experience but mostly with smaller-scale systems. Good attitude. Jury lean is to progress to technical assessment.' },
-  '8':  { id:'8', name:'Sofia Martinez',    email:'sofia@email.com',     phone:'+1 305 555 0148', location:'Miami, FL',          current_title:'Marketing Manager',        applied_for:'Head of Marketing',        stage:'rejected',    source:'indeed',      composite_score:44, cv_score:42, phone_screen_score:43, assessment_score:46, interview_score:null, skills:['SEO','Content','Analytics','Social Media'],          created_at:'2026-03-08', summary:'Sofia has B2C marketing experience but limited B2B SaaS exposure. Poor fit for this role. Jury unanimous: reject.' },
-  '9':  { id:'9', name:'Elena Vasquez',     email:'elena@email.com',     phone:'+1 213 555 0169', location:'Los Angeles, CA',    current_title:'VP of Marketing',          applied_for:'Head of Marketing',        stage:'interview',   source:'linkedin',    composite_score:83, cv_score:85, phone_screen_score:82, assessment_score:81, interview_score:83, skills:['Brand Strategy','Growth','GTM','Demand Gen','HubSpot'],created_at:'2026-03-14', summary:'Elena is a seasoned marketing leader with 10+ years. Strong strategic thinking and track record of scaling B2B pipelines. Jury: strong recommend.' },
-  '10': { id:'10',name:'Wei Zhang',         email:'wei@email.com',       phone:'+1 408 555 0110', location:'San Jose, CA',       current_title:'ML Engineer',              applied_for:'ML Engineer',              stage:'shortlisted', source:'linkedin',    composite_score:88, cv_score:90, phone_screen_score:87, assessment_score:86, interview_score:89, skills:['PyTorch','MLOps','Python','CUDA','Distributed Training'], created_at:'2026-03-15', summary:'Wei has deep expertise in production ML systems. Published 2 papers on efficient training. Jury unanimous: exceptional candidate, recommend offer.' },
-  '11': { id:'11',name:'Isabella Romano',   email:'isabella@email.com',  phone:'+1 646 555 0111', location:'New York, NY',       current_title:'iOS Engineer',             applied_for:'iOS Engineer',             stage:'interview',   source:'direct',      composite_score:76, cv_score:77, phone_screen_score:75, assessment_score:74, interview_score:77, skills:['Swift','UIKit','SwiftUI','Core Data','Combine'],       created_at:'2026-03-13', summary:'Isabella has strong iOS fundamentals with 5 years of App Store experience. Good problem-solving in the interview. Jury leans towards shortlist.' },
-  '12': { id:'12',name:'Noah Thompson',     email:'noah@email.com',      phone:'+1 347 555 0112', location:'New York, NY',       current_title:'Account Executive',        applied_for:'Sales Executive',          stage:'screening',   source:'linkedin',    composite_score:69, cv_score:68, phone_screen_score:70, assessment_score:67, interview_score:null, skills:['SaaS Sales','Salesforce','Negotiation','Outbound'],   created_at:'2026-03-12', summary:'Noah has 4 years of SaaS AE experience with a solid track record. Missed quota last year. Jury recommendation: proceed to full assessment.' },
-  '13': { id:'13',name:'Aisha Kofi',        email:'aisha@email.com',     phone:'+1 415 555 0113', location:'San Francisco, CA',  current_title:'Product Designer',         applied_for:'Product Designer',         stage:'shortlisted', source:'indeed',      composite_score:82, cv_score:84, phone_screen_score:80, assessment_score:81, interview_score:83, skills:['Figma','Design Systems','Accessibility','Motion Design'], created_at:'2026-03-14', summary:'Aisha has exceptional design portfolio with a focus on accessibility. Strong systems thinker. Jury unanimous: shortlist and move to offer stage.' },
-  '14': { id:'14',name:'Diego Herrera',     email:'diego@email.com',     phone:'+1 512 555 0114', location:'Austin, TX',         current_title:'Frontend Engineer',        applied_for:'Frontend Engineer',        stage:'screening',   source:'ziprecruiter',composite_score:71, cv_score:72, phone_screen_score:70, assessment_score:69, interview_score:null, skills:['Vue.js','CSS','Performance','Webpack','TypeScript'],   created_at:'2026-03-11', summary:'Diego has 4 years of Vue experience transitioning to React. Good CSS fundamentals, some performance optimization work. Jury: proceed to assessment.' },
-  '15': { id:'15',name:'Yuki Tanaka',       email:'yuki@email.com',      phone:'+1 650 555 0115', location:'Palo Alto, CA',      current_title:'Senior Data Scientist',    applied_for:'Data Scientist',           stage:'offered',     source:'linkedin',    composite_score:93, cv_score:94, phone_screen_score:92, assessment_score:91, interview_score:94, skills:['R','Statistics','Visualization','Bayesian Modeling','Python'], created_at:'2026-03-15', summary:'Yuki is a world-class data scientist with a PhD and 3 publications. Perfect technical and cultural fit. Jury unanimous: offer extended.' },
-}
 
 export default function CandidateDetail() {
   const { id } = useParams()
@@ -115,62 +83,34 @@ export default function CandidateDetail() {
   const [tab, setTab] = useState('overview')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  const [note, setNote] = useState('')
 
-  // Data state
+  const [application, setApplication] = useState(null)
   const [candidate, setCandidate] = useState(null)
-  const [assessment, setAssessment] = useState(null)
+  const [job, setJob] = useState(null)
+  const [stage1, setStage1] = useState(null)
+  const [stage2, setStage2] = useState(null)
+  const [stage3, setStage3] = useState(null)
   const [interview, setInterview] = useState(null)
-  const [transcript, setTranscript] = useState(null)
+  const [interviewScores, setInterviewScores] = useState(null)
   const [facialAnalysis, setFacialAnalysis] = useState(null)
-  const [notes, setNotes] = useState([])
 
   useEffect(() => {
     async function loadData() {
       setLoading(true)
       setError(null)
       try {
-        const res = await getCandidate(id)
-        // API returns { status, data: { candidate, applications, ... } }
-        const candidateData = res?.data?.candidate || res?.data || res
-        setCandidate(candidateData)
-
-        // Load related data in parallel, gracefully handling missing data
-        const promises = []
-
-        if (candidateData.assessment_id) {
-          promises.push(
-            getAssessment(candidateData.assessment_id).then(d => setAssessment(d?.data || d)).catch(() => null)
-          )
-        }
-
-        if (candidateData.interview_id) {
-          promises.push(
-            getInterview(candidateData.interview_id).then(d => setInterview(d?.data || d)).catch(() => null)
-          )
-          promises.push(
-            getTranscript(candidateData.interview_id).then(d => setTranscript(d?.data || d)).catch(() => null)
-          )
-          promises.push(
-            getFacialAnalysis(candidateData.interview_id).then(d => setFacialAnalysis(d?.data || d)).catch(() => null)
-          )
-        }
-
-        if (candidateData.application_id) {
-          promises.push(
-            getNotes(candidateData.application_id).then(d => setNotes(d?.data?.items || d?.data || d || [])).catch(() => [])
-          )
-        }
-
-        await Promise.all(promises)
+        const result = await fetchApplication(id)
+        setApplication(result.application)
+        setCandidate(result.candidate)
+        setJob(result.job)
+        setStage1(result.stage1)
+        setStage2(result.stage2)
+        setStage3(result.stage3)
+        setInterview(result.interview)
+        setInterviewScores(result.interviewScores)
+        setFacialAnalysis(result.facialAnalysis)
       } catch (err) {
-        // Fall back to demo mock data for the 15 candidates shown on the Candidates page
-        const mock = MOCK_DETAILS[id]
-        if (mock) {
-          setCandidate(mock)
-        } else {
-          setError(err.message || 'Failed to load candidate data')
-        }
+        setError(err.message || 'Failed to load candidate data')
       } finally {
         setLoading(false)
       }
@@ -178,72 +118,53 @@ export default function CandidateDetail() {
     loadData()
   }, [id])
 
-  async function handleAddNote() {
-    if (!note.trim() || !candidate?.application_id) return
-    try {
-      await addNote(candidate.application_id, note.trim())
-      setNote('')
-      const updated = await getNotes(candidate.application_id).catch(() => [])
-      setNotes(updated)
-    } catch (e) {
-      console.error('Failed to add note:', e)
-    }
-  }
-
-  async function handleShortlist() {
-    if (!candidate?.application_id) return
-    try {
-      await shortlistApplication(candidate.application_id)
-      const updated = await getCandidate(id)
-      setCandidate(updated)
-    } catch (e) {
-      console.error('Failed to shortlist:', e)
-    }
-  }
-
-  async function handleReject() {
-    if (!candidate?.application_id) return
-    try {
-      await rejectApplication(candidate.application_id, { reason: 'Rejected by recruiter' })
-      const updated = await getCandidate(id)
-      setCandidate(updated)
-    } catch (e) {
-      console.error('Failed to reject:', e)
-    }
-  }
-
   if (loading) return <Layout><PageLoader /></Layout>
 
-  if (error) {
+  if (error || !application) {
     return (
       <Layout>
-        <PageHeader title="Candidate" breadcrumb="Candidates" actions={
-          <button onClick={() => navigate('/candidates')} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}>
-            <ChevronLeft size={13} /> Back
-          </button>
-        } />
-        <EmptyState icon={AlertCircle} title="Error Loading Candidate" description={error} />
+        <PageHeader
+          title="Candidate"
+          breadcrumb="Candidates"
+          actions={
+            <button
+              onClick={() => navigate('/candidates')}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}
+            >
+              <ChevronLeft size={13} /> Back
+            </button>
+          }
+        />
+        <EmptyState icon={AlertCircle} title="Error Loading Candidate" description={error || 'Application not found'} />
       </Layout>
     )
   }
 
   const c = candidate || {}
-  const compositeScore = c.composite_score ?? c.overall_score ?? null
-  const cvScore = c.cv_score ?? c.pipeline_stages?.[0]?.score ?? null
-  const interviewScore = c.interview_score ?? interview?.composite_score ?? null
-  const assessmentScore = c.assessment_score ?? assessment?.overall_score ?? null
-  const facialScore = facialAnalysis?.overall_score ?? null
+  const currentStage = deriveStage(application.status, application.pipeline_stage)
 
-  const tabs = ['overview', 'pipeline', 'assessments', 'interview', 'facial analysis', 'documents']
+  const semanticScore = stage2?.total_score ?? null
+  const llmScore = stage3?.stage3_score ?? null
+  const interviewScore = interviewScores?.stage6_score ?? null
+  const facialScore = facialAnalysis?.overall_score ?? null
+  const compositeScore = interviewScores?.final_composite ?? semanticScore ?? null
+
+  const location = [c.city, c.country].filter(Boolean).join(', ')
+  const currentTitle = [c.seniority_level, job?.title].filter(Boolean).join(' — ')
+
+  const tabs = ['overview', 'pipeline', 'interview', 'facial analysis', 'documents']
 
   return (
     <Layout>
       <PageHeader
-        title={c.name || 'Candidate'}
+        title={c.full_name || 'Candidate'}
         breadcrumb="Candidates"
-        subtitle={[c.current_title, c.applied_for && `Applied for ${c.applied_for}`].filter(Boolean).join(' \u00b7 ')}
+        subtitle={[currentTitle, job?.title && `Applied for ${job.title}`].filter(Boolean).join(' · ')}
         actions={
-          <button onClick={() => navigate('/candidates')} style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}>
+          <button
+            onClick={() => navigate('/candidates')}
+            style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, cursor: 'pointer' }}
+          >
             <ChevronLeft size={13} /> Back
           </button>
         }
@@ -254,19 +175,24 @@ export default function CandidateDetail() {
         <div style={{ overflowY: 'auto', borderRight: '1px solid var(--border)' }}>
           {/* Profile header */}
           <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-            <div style={{ width: 60, height: 60, borderRadius: 14, background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 22, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-              {(c.name || '?').split(' ').map(n => n[0]).join('')}
+            <div style={{
+              width: 60, height: 60, borderRadius: 14,
+              background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: 22, fontWeight: 700, color: '#fff', flexShrink: 0,
+            }}>
+              {(c.full_name || '?').split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
             </div>
             <div style={{ flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
-                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>{c.name}</h2>
-                {c.stage && <Badge status={c.stage} />}
+                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)' }}>{c.full_name}</h2>
+                <Badge label={STAGE_LABELS[currentStage] || currentStage} status={currentStage} />
                 {c.source && <Badge status={c.source} size="xs" />}
               </div>
               <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
                 {c.email && <InfoChip icon={Mail} text={c.email} />}
                 {c.phone && <InfoChip icon={Phone} text={c.phone} />}
-                {c.location && <InfoChip icon={MapPin} text={c.location} />}
+                {location && <InfoChip icon={MapPin} text={location} />}
               </div>
             </div>
             <div style={{ display: 'flex', gap: 16, flexShrink: 0, alignItems: 'center' }}>
@@ -277,13 +203,13 @@ export default function CandidateDetail() {
           {/* Score breakdown */}
           <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 24 }}>
             <div style={{ flex: 1 }}>
-              <ScoreBar score={cvScore ?? 0} label="CV Score" height={6} />
+              <ScoreBar score={semanticScore ?? 0} label="Semantic" height={6} />
+            </div>
+            <div style={{ flex: 1 }}>
+              <ScoreBar score={llmScore ?? 0} label="LLM Eval" height={6} />
             </div>
             <div style={{ flex: 1 }}>
               <ScoreBar score={interviewScore ?? 0} label="Interview" height={6} />
-            </div>
-            <div style={{ flex: 1 }}>
-              <ScoreBar score={assessmentScore ?? 0} label="Assessment" height={6} />
             </div>
             <div style={{ flex: 1 }}>
               <ScoreBar score={facialScore ?? 0} label="Facial" height={6} />
@@ -294,13 +220,20 @@ export default function CandidateDetail() {
           <div style={{ borderBottom: '1px solid var(--border)', padding: '0 24px', display: 'flex', gap: 0 }}>
             {tabs.map(t => (
               <button key={t} onClick={() => setTab(t)} style={{
-                padding: '10px 14px', background: 'transparent',
+                padding: '10px 14px',
+                background: 'transparent',
                 color: tab === t ? 'var(--text-primary)' : 'var(--text-muted)',
-                fontSize: 12, fontWeight: tab === t ? 600 : 400,
+                fontSize: 12,
+                fontWeight: tab === t ? 600 : 400,
                 borderBottom: `2px solid ${tab === t ? 'var(--accent)' : 'transparent'}`,
-                borderRadius: 0, marginBottom: -1, textTransform: 'capitalize',
-                transition: 'all 0.1s', cursor: 'pointer', border: 'none',
-                borderBottomStyle: 'solid', borderBottomWidth: 2,
+                borderRadius: 0,
+                marginBottom: -1,
+                textTransform: 'capitalize',
+                transition: 'all 0.1s',
+                cursor: 'pointer',
+                border: 'none',
+                borderBottomStyle: 'solid',
+                borderBottomWidth: 2,
                 borderBottomColor: tab === t ? 'var(--accent)' : 'transparent',
               }}>
                 {t}
@@ -309,74 +242,103 @@ export default function CandidateDetail() {
           </div>
 
           <div style={{ padding: '20px 24px' }}>
-            {tab === 'overview' && <OverviewTab candidate={c} assessment={assessment} interview={interview} />}
-            {tab === 'pipeline' && <PipelineTab candidate={c} assessment={assessment} interview={interview} />}
-            {tab === 'assessments' && <AssessmentsTab assessment={assessment} candidate={c} />}
-            {tab === 'interview' && <InterviewTab interview={interview} transcript={transcript} candidate={c} />}
-            {tab === 'facial analysis' && <FacialAnalysisTab facialAnalysis={facialAnalysis} assessment={assessment} />}
-            {tab === 'documents' && <DocumentsTab candidate={c} assessment={assessment} />}
+            {tab === 'overview' && (
+              <OverviewTab
+                candidate={c}
+                job={job}
+                application={application}
+                stage1={stage1}
+                stage2={stage2}
+                stage3={stage3}
+                interviewScores={interviewScores}
+              />
+            )}
+            {tab === 'pipeline' && (
+              <PipelineTab
+                application={application}
+                stage1={stage1}
+                stage2={stage2}
+                stage3={stage3}
+                interview={interview}
+                interviewScores={interviewScores}
+                facialAnalysis={facialAnalysis}
+                currentStage={currentStage}
+              />
+            )}
+            {tab === 'interview' && (
+              <InterviewTab
+                interview={interview}
+                interviewScores={interviewScores}
+              />
+            )}
+            {tab === 'facial analysis' && (
+              <FacialAnalysisTab facialAnalysis={facialAnalysis} />
+            )}
+            {tab === 'documents' && (
+              <DocumentsTab candidate={c} />
+            )}
           </div>
         </div>
 
         {/* Right column */}
         <div style={{ overflowY: 'auto', padding: '20px 16px', display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Actions */}
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Actions</p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-              <ActionButton icon={Star} label="Shortlist" color="var(--success)" onClick={handleShortlist} />
-              <ActionButton icon={Calendar} label="Schedule Interview" color="var(--info)" />
-              <ActionButton icon={ClipboardList} label="Send Assessment" color="var(--accent)" />
-              <ActionButton icon={FileText} label="Create Offer" color="var(--warning)" />
-              <ActionButton icon={XCircle} label="Reject" color="var(--danger)" outline onClick={handleReject} />
-            </div>
-          </div>
-
           {/* Quick Stats */}
           <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
             <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Quick Stats</p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <StatRow icon={Clock} label="Interview Duration" value={interview?.duration ? `${Math.round(interview.duration / 60)} min` : interview?.total_time || '--'} />
-              <StatRow icon={Calendar} label="Assessment Date" value={assessment?.completed_at ? new Date(assessment.completed_at).toLocaleDateString() : assessment?.created_at ? new Date(assessment.created_at).toLocaleDateString() : '--'} />
-              <StatRow icon={Activity} label="Days in Pipeline" value={c.created_at ? `${Math.floor((Date.now() - new Date(c.created_at).getTime()) / 86400000)}d` : '--'} />
-              <StatRow icon={Target} label="Stage" value={c.stage || c.current_stage || '--'} />
+              <StatRow icon={Clock} label="Applied" value={application.applied_at ? new Date(application.applied_at).toLocaleDateString() : '--'} />
+              <StatRow icon={Target} label="Stage" value={STAGE_LABELS[currentStage] || currentStage} />
+              <StatRow icon={Activity} label="Experience" value={c.years_relevant_experience != null ? `${c.years_relevant_experience}y` : '--'} />
+              <StatRow icon={BookOpen} label="Degree" value={c.highest_degree || '--'} />
+              {interview?.duration_seconds && (
+                <StatRow icon={Video} label="Interview" value={`${Math.round(interview.duration_seconds / 60)} min`} />
+              )}
+              {stage2?.rank && (
+                <StatRow icon={Star} label="Rank" value={`#${stage2.rank}`} />
+              )}
             </div>
           </div>
 
-          {/* Quick Notes */}
-          <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
-            <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Quick Notes</p>
-            <textarea
-              value={note}
-              onChange={e => setNote(e.target.value)}
-              placeholder="Add a note about this candidate..."
-              rows={3}
-              style={{ resize: 'none', fontSize: 12, width: '100%', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', color: 'var(--text-primary)' }}
-            />
-            <button
-              onClick={handleAddNote}
-              disabled={!note.trim()}
-              style={{ marginTop: 8, width: '100%', padding: '7px', background: note.trim() ? 'var(--accent)' : 'var(--bg-tertiary)', color: '#fff', borderRadius: 6, fontSize: 12, fontWeight: 600, cursor: note.trim() ? 'pointer' : 'not-allowed', border: 'none' }}
-            >
-              Add Note
-            </button>
-            {notes && notes.length > 0 && (
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {notes.slice(0, 5).map((n, i) => (
-                  <div key={n.id || i} style={{ padding: '6px 8px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, color: 'var(--text-secondary)' }}>
-                    {n.content || n.text}
-                    {n.created_at && <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 2 }}>{new Date(n.created_at).toLocaleString()}</div>}
-                  </div>
+          {/* Skills */}
+          {c.skills && c.skills.length > 0 && (
+            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
+              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Skills</p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
+                {c.skills.map(s => (
+                  <span key={s} style={{ padding: '3px 8px', borderRadius: 4, fontSize: 11, background: 'rgba(129,140,248,0.1)', color: 'var(--accent)', border: '1px solid rgba(129,140,248,0.2)', fontWeight: 500 }}>
+                    {s}
+                  </span>
                 ))}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Activity Timeline */}
-          {c.activity && c.activity.length > 0 && (
+          {/* CV Link */}
+          {c.cv_file_url && (
             <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
-              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Activity</p>
-              <Timeline events={c.activity} />
+              <p style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Documents</p>
+              <a
+                href={c.cv_file_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent)', fontSize: 13, textDecoration: 'none' }}
+              >
+                <Download size={13} /> View CV
+              </a>
+            </div>
+          )}
+
+          {/* LinkedIn */}
+          {c.linkedin_url && (
+            <div style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px' }}>
+              <a
+                href={c.linkedin_url}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{ display: 'flex', alignItems: 'center', gap: 8, color: 'var(--accent)', fontSize: 13, textDecoration: 'none' }}
+              >
+                <ExternalLink size={13} /> LinkedIn Profile
+              </a>
             </div>
           )}
         </div>
@@ -386,19 +348,19 @@ export default function CandidateDetail() {
 }
 
 // ─── Overview Tab ──────────────────────────────────────────────
-function OverviewTab({ candidate: c, assessment, interview }) {
+function OverviewTab({ candidate: c, job, application, stage1, stage2, stage3, interviewScores }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* AI Summary */}
-      {(c.summary || c.ai_summary) && (
-        <Section title="AI Summary" icon={Sparkles}>
+      {/* Summary */}
+      {c.professional_summary && (
+        <Section title="Professional Summary" icon={Sparkles}>
           <div style={{
             padding: '14px 16px',
             background: 'rgba(129,140,248,0.05)',
             border: '1px solid rgba(129,140,248,0.15)',
             borderRadius: 8,
           }}>
-            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{c.summary || c.ai_summary}</p>
+            <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.7 }}>{c.professional_summary}</p>
           </div>
         </Section>
       )}
@@ -408,70 +370,129 @@ function OverviewTab({ candidate: c, assessment, interview }) {
         <Section title="Skills">
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
             {c.skills.map(s => (
-              <span key={s} style={{ padding: '4px 10px', borderRadius: 4, fontSize: 12, background: 'rgba(129,140,248,0.1)', color: 'var(--accent)', border: '1px solid rgba(129,140,248,0.2)', fontWeight: 500 }}>{s}</span>
+              <span key={s} style={{ padding: '4px 10px', borderRadius: 4, fontSize: 12, background: 'rgba(129,140,248,0.1)', color: 'var(--accent)', border: '1px solid rgba(129,140,248,0.2)', fontWeight: 500 }}>
+                {s}
+              </span>
             ))}
           </div>
         </Section>
       )}
 
-      {/* Score Overview */}
+      {/* Score Breakdown */}
       <Section title="Score Breakdown">
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
-          <ScoreCard label="CV Screening" score={c.cv_score} icon={FileText} description="Resume-to-job fit analysis" />
-          <ScoreCard label="Phone Screen" score={c.phone_screen_score} icon={Phone} description="Voice screening results" />
-          <ScoreCard label="Assessment" score={c.assessment_score ?? assessment?.overall_score} icon={Brain} description="Cognitive + personality + language" />
-          <ScoreCard label="Interview" score={c.interview_score ?? interview?.composite_score} icon={Video} description="Behavioral interview performance" />
+          <ScoreCard label="Hard Filters" score={stage1?.passed === true ? 100 : stage1?.passed === false ? 0 : null} icon={Shield} description={stage1 ? (stage1.passed ? 'Passed all hard requirements' : `Failed: ${(stage1.elimination_reasons || []).slice(0,2).join(', ')}`) : 'Not yet evaluated'} />
+          <ScoreCard label="Semantic Similarity" score={stage2?.total_score ?? null} icon={Brain} description="CV-to-job embedding similarity" />
+          <ScoreCard label="LLM Evaluation" score={stage3?.stage3_score ?? null} icon={Bot} description="Career trajectory assessment" />
+          <ScoreCard label="Video Interview" score={interviewScores?.stage6_score ?? null} icon={Video} description="Interview performance score" />
         </div>
       </Section>
 
-      {/* Experience */}
-      {c.experience && c.experience.length > 0 && (
-        <Section title="Experience">
-          {c.experience.map((exp, i) => (
-            <div key={i} style={{ display: 'flex', gap: 12, marginBottom: 14 }}>
-              <div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)', marginTop: 5, flexShrink: 0 }} />
-              <div>
-                <div style={{ fontWeight: 600, color: 'var(--text-primary)', fontSize: 13 }}>{exp.title}</div>
-                <div style={{ fontSize: 12, color: 'var(--accent)', marginTop: 1 }}>{exp.company} {exp.period && `\u00b7 ${exp.period}`}</div>
-                {exp.description && <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 4 }}>{exp.description}</div>}
-              </div>
-            </div>
-          ))}
+      {/* Education */}
+      {(c.university || c.highest_degree || c.major) && (
+        <Section title="Education" icon={BookOpen}>
+          <div style={{ padding: '12px 14px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {c.highest_degree && (
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 2 }}>{c.highest_degree}{c.major ? ` in ${c.major}` : ''}</div>
+            )}
+            {c.university && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{c.university}</div>
+            )}
+          </div>
         </Section>
       )}
 
-      {/* Education */}
-      {c.education && c.education.length > 0 && (
-        <Section title="Education">
-          {c.education.map((edu, i) => (
-            <div key={i} style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 4 }}>
-              <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>{edu.degree}</span> {edu.school && `\u2014 ${edu.school}`} {edu.year && `\u00b7 ${edu.year}`}
-            </div>
-          ))}
+      {/* Certifications */}
+      {c.certifications && c.certifications.length > 0 && (
+        <Section title="Certifications">
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {c.certifications.map((cert, i) => (
+              <div key={i} style={{ fontSize: 13, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6 }}>
+                {cert}
+              </div>
+            ))}
+          </div>
         </Section>
       )}
+
+      {/* Languages */}
+      {c.languages && c.languages.length > 0 && (
+        <Section title="Languages">
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {c.languages.map(lang => (
+              <span key={lang} style={{ padding: '4px 10px', borderRadius: 4, fontSize: 12, background: 'var(--bg-secondary)', color: 'var(--text-secondary)', border: '1px solid var(--border)' }}>
+                {lang}
+              </span>
+            ))}
+          </div>
+        </Section>
+      )}
+
+      {/* Application info */}
+      <Section title="Application Details">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <InfoRow label="Applied for" value={job?.title || '—'} />
+          <InfoRow label="Status" value={application.status} />
+          <InfoRow label="Applied at" value={application.applied_at ? new Date(application.applied_at).toLocaleDateString() : '—'} />
+          {application.updated_at && <InfoRow label="Updated" value={new Date(application.updated_at).toLocaleDateString()} />}
+        </div>
+      </Section>
     </div>
   )
 }
 
 // ─── Pipeline Tab ──────────────────────────────────────────────
-function PipelineTab({ candidate: c, assessment, interview }) {
+function PipelineTab({ application, stage1, stage2, stage3, interview, interviewScores, facialAnalysis, currentStage }) {
   const [expandedInfo, setExpandedInfo] = useState({})
-  const stages = c.pipeline_stages || []
+
+  // Build status for each stage
+  function getStageData(stageKey, index) {
+    switch (stageKey) {
+      case 'applied':
+        return { done: true, passed: true, score: null, data: null }
+      case 'hard_filters':
+        if (!stage1) return { done: false, passed: null, score: null, data: null }
+        return { done: true, passed: stage1.passed, score: stage1.skills_matched_count, data: stage1 }
+      case 'semantic_similarity':
+        if (!stage2) return { done: false, passed: null, score: null, data: null }
+        return { done: true, passed: stage2.passed, score: stage2.total_score, data: stage2 }
+      case 'llm_evaluation':
+        if (!stage3) return { done: false, passed: null, score: null, data: null }
+        return { done: true, passed: stage3.passed, score: stage3.stage3_score, data: stage3 }
+      case 'video_interview':
+        if (!interview) return { done: false, passed: null, score: null, data: null }
+        const intScore = interviewScores?.stage6_score ?? interviewScores?.final_composite ?? null
+        const done = ['completed', 'scored'].includes(interview.status)
+        return { done, passed: done && intScore != null ? intScore >= 50 : null, score: intScore, data: interview }
+      case 'hired':
+        return { done: application.status === 'hired', passed: application.status === 'hired', score: null, data: null }
+      default:
+        return { done: false, passed: null, score: null, data: null }
+    }
+  }
+
+  function stageStatusStyle(done, passed) {
+    if (!done) return { color: '#52525b', label: 'Pending', bg: 'var(--bg-tertiary)' }
+    if (passed === true) return { color: '#34d399', label: 'Pass', bg: 'rgba(52,211,153,0.1)' }
+    if (passed === false) return { color: '#f87171', label: 'Failed', bg: 'rgba(248,113,113,0.1)' }
+    return { color: '#fbbf24', label: 'In Progress', bg: 'rgba(251,191,36,0.1)' }
+  }
+
+  const currentStageIndex = STAGE_ORDER.indexOf(currentStage)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Stage progress bar */}
       <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
         {STAGE_META.map((meta, i) => {
-          const stage = stages[i]
-          const status = getStageStatus(stage)
+          const sd = getStageData(meta.key, i)
+          const status = stageStatusStyle(sd.done, sd.passed)
           return (
             <div key={i} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
               <div style={{
                 height: 4, width: '100%', borderRadius: 2,
                 background: status.color,
-                opacity: stage?.status ? 1 : 0.2,
+                opacity: sd.done ? 1 : 0.2,
               }} />
               <span style={{ fontSize: 9, color: status.color, textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.05em', textAlign: 'center' }}>
                 {i + 1}
@@ -483,8 +504,8 @@ function PipelineTab({ candidate: c, assessment, interview }) {
 
       {/* Stage cards */}
       {STAGE_META.map((meta, i) => {
-        const stage = stages[i] || {}
-        const status = getStageStatus(stage)
+        const sd = getStageData(meta.key, i)
+        const status = stageStatusStyle(sd.done, sd.passed)
         const StageIcon = meta.icon
         const isInfoExpanded = expandedInfo[i]
 
@@ -511,22 +532,15 @@ function PipelineTab({ candidate: c, assessment, interview }) {
               </div>
               <div style={{ flex: 1 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Stage {i + 1}: {meta.title}</span>
-                  <div style={{
-                    width: 7, height: 7, borderRadius: '50%',
-                    background: status.color,
-                    flexShrink: 0,
-                  }} />
+                  <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+                    Stage {i + 1}: {meta.title}
+                  </span>
+                  <div style={{ width: 7, height: 7, borderRadius: '50%', background: status.color, flexShrink: 0 }} />
                   <span style={{ fontSize: 11, color: status.color, fontWeight: 600 }}>{status.label}</span>
                 </div>
-                {stage.date && (
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>
-                    {new Date(stage.date).toLocaleDateString()}
-                  </span>
-                )}
               </div>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                {stage.score != null && <ScoreCircle score={stage.score} size={42} label="" />}
+                {sd.score != null && <ScoreCircle score={sd.score} size={42} label="" />}
               </div>
             </div>
 
@@ -543,7 +557,9 @@ function PipelineTab({ candidate: c, assessment, interview }) {
             >
               <Info size={11} />
               <span>How this stage works</span>
-              {isInfoExpanded ? <ChevronUp size={11} style={{ marginLeft: 'auto' }} /> : <ChevronDown size={11} style={{ marginLeft: 'auto' }} />}
+              {isInfoExpanded
+                ? <ChevronUp size={11} style={{ marginLeft: 'auto' }} />
+                : <ChevronDown size={11} style={{ marginLeft: 'auto' }} />}
             </button>
 
             {isInfoExpanded && (
@@ -571,35 +587,12 @@ function PipelineTab({ candidate: c, assessment, interview }) {
 
             {/* Stage content */}
             <div style={{ padding: '14px 16px' }}>
-              {/* Stage 1: CV Screening */}
-              {i === 0 && (
-                <CVStageContent stage={stage} candidate={c} />
-              )}
-
-              {/* Stage 2: Phone Screen */}
-              {i === 1 && (
-                <PhoneScreenContent stage={stage} candidate={c} />
-              )}
-
-              {/* Stage 3: Assessment */}
-              {i === 2 && (
-                <AssessmentStageContent stage={stage} assessment={assessment} />
-              )}
-
-              {/* Stage 4: Interview */}
-              {i === 3 && (
-                <InterviewStageContent stage={stage} interview={interview} candidate={c} />
-              )}
-
-              {/* Stage 5: Recruiter Review */}
-              {i === 4 && (
-                <RecruiterReviewContent stage={stage} candidate={c} />
-              )}
-
-              {/* Stage 6: Offer */}
-              {i === 5 && (
-                <OfferStageContent stage={stage} candidate={c} />
-              )}
+              {meta.key === 'applied' && <AppliedStageContent application={application} />}
+              {meta.key === 'hard_filters' && <HardFiltersContent stage1={stage1} />}
+              {meta.key === 'semantic_similarity' && <SemanticSimilarityContent stage2={stage2} />}
+              {meta.key === 'llm_evaluation' && <LLMEvaluationContent stage3={stage3} />}
+              {meta.key === 'video_interview' && <VideoInterviewContent interview={interview} interviewScores={interviewScores} />}
+              {meta.key === 'hired' && <HiredContent application={application} />}
             </div>
           </div>
         )
@@ -608,510 +601,260 @@ function PipelineTab({ candidate: c, assessment, interview }) {
   )
 }
 
-function CVStageContent({ stage, candidate: c }) {
-  if (!stage?.score && !stage?.notes && !c.cv_score) {
-    return <PendingMessage />
-  }
+function AppliedStageContent({ application }) {
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      {/* Score breakdown */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        <MiniStat label="Overall CV" value={stage.score ?? c.cv_score ?? '--'} suffix="/100" />
-        <MiniStat label="Keyword Match" value={stage.keyword_match ?? c.keyword_match_pct ?? '--'} suffix="%" />
-        <MiniStat label="Embedding Sim." value={stage.embedding_similarity ?? c.embedding_similarity ?? '--'} suffix="%" />
-      </div>
-
-      {/* Jury verdict */}
-      {(stage.jury_votes || c.jury_votes) && (
-        <div style={{ marginTop: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>3-LLM Jury Verdict</span>
-          <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-            {(stage.jury_votes || c.jury_votes || []).map((vote, vi) => (
-              <div key={vi} style={{
-                padding: '4px 10px', borderRadius: 4, fontSize: 11, fontWeight: 700,
-                background: vote === 'pass' || vote === true ? 'rgba(52,211,153,0.12)' : 'rgba(248,113,113,0.12)',
-                color: vote === 'pass' || vote === true ? '#34d399' : '#f87171',
-                border: `1px solid ${vote === 'pass' || vote === true ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
-                fontFamily: 'Geist Mono, monospace',
-              }}>
-                LLM {vi + 1}: {vote === 'pass' || vote === true ? 'PASS' : 'FAIL'}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* AI summary */}
-      {(stage.notes || stage.ai_summary) && (
-        <AISummaryBox text={stage.notes || stage.ai_summary} />
-      )}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <MiniStat label="Applied At" value={application.applied_at ? new Date(application.applied_at).toLocaleString() : '--'} isText />
     </div>
   )
 }
 
-function PhoneScreenContent({ stage, candidate: c }) {
-  if (!stage?.score && !stage?.notes) {
-    return <PendingMessage />
-  }
+function HardFiltersContent({ stage1 }) {
+  if (!stage1) return <PendingMessage />
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <MiniStat label="Overall Score" value={stage.score ?? '--'} suffix="/100" />
-        <MiniStat label="Jury Agreement" value={stage.jury_agreement ?? '--'} suffix="%" />
+        <MiniStat label="Result" value={stage1.passed ? 'Passed' : 'Failed'} isText />
+        <MiniStat label="Skills Matched" value={stage1.skills_matched_count ?? '--'} isText />
       </div>
-
-      {/* Per-question grades */}
-      {stage.question_grades && stage.question_grades.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Question Grades</span>
-          <div style={{ display: 'flex', gap: 6, marginTop: 6, flexWrap: 'wrap' }}>
-            {stage.question_grades.map((g, gi) => (
-              <span key={gi} style={{
-                padding: '3px 8px', borderRadius: 4, fontSize: 11, fontWeight: 700,
-                background: gradeColors[g] ? `${gradeColors[g]}20` : 'var(--bg-tertiary)',
-                color: gradeColors[g] || 'var(--text-muted)',
-                fontFamily: 'Geist Mono, monospace',
-              }}>
-                Q{gi + 1}: {g}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(stage.notes || stage.ai_summary) && (
-        <AISummaryBox text={stage.notes || stage.ai_summary} />
-      )}
-    </div>
-  )
-}
-
-function AssessmentStageContent({ stage, assessment }) {
-  if (!stage?.score && !stage?.notes && !assessment) {
-    return <PendingMessage />
-  }
-  const bigFive = assessment?.big_five || assessment?.personality
-  const cognitive = assessment?.cognitive
-  const language = assessment?.language
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        <MiniStat label="Overall" value={stage?.score ?? assessment?.overall_score ?? '--'} suffix="/100" />
-        <MiniStat label="Cognitive" value={cognitive?.overall ?? cognitive?.percentile ?? '--'} suffix={cognitive?.percentile ? 'th %ile' : '/100'} />
-        <MiniStat label="Language" value={language?.level ?? '--'} isText />
-      </div>
-
-      {/* Big Five mini bars */}
-      {bigFive && Array.isArray(bigFive) && bigFive.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Big Five Preview</span>
+      {stage1.elimination_reasons && stage1.elimination_reasons.length > 0 && (
+        <div>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Elimination Reasons</span>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
-            {bigFive.slice(0, 5).map(b => (
-              <ScoreBar key={b.factor || b.name} score={b.score || b.value || 0} label={b.factor || b.name} height={4} />
-            ))}
-          </div>
-        </div>
-      )}
-
-      {(stage?.notes || stage?.ai_summary) && (
-        <AISummaryBox text={stage.notes || stage.ai_summary} />
-      )}
-    </div>
-  )
-}
-
-function InterviewStageContent({ stage, interview, candidate: c }) {
-  if (!stage?.score && !stage?.notes && !interview && !c.interview_questions) {
-    return <PendingMessage />
-  }
-  const questions = interview?.questions || c.interview_questions || []
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        <MiniStat label="Composite" value={interview?.composite_score ?? stage?.score ?? c.interview_score ?? '--'} suffix="/100" />
-        <MiniStat label="Questions" value={questions.length || '--'} isText />
-        <MiniStat label="Duration" value={interview?.duration ? `${Math.round(interview.duration / 60)}m` : '--'} isText />
-      </div>
-
-      {/* Top 3 question grades */}
-      {questions.length > 0 && (
-        <div style={{ marginTop: 4 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Question Performance</span>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 6 }}>
-            {questions.slice(0, 3).map((q, qi) => (
-              <div key={qi} style={{
-                display: 'flex', alignItems: 'center', gap: 8,
-                padding: '6px 10px',
-                background: 'var(--bg-primary)',
-                border: '1px solid var(--border)',
-                borderRadius: 6,
-              }}>
-                <span style={{
-                  fontSize: 10, fontWeight: 800, color: '#fff',
-                  background: gradeColors[q.grade] || 'var(--accent)',
-                  borderRadius: 3, padding: '1px 6px', flexShrink: 0,
-                }}>{q.grade}</span>
-                <span style={{ fontSize: 11, color: 'var(--text-secondary)', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {q.question}
-                </span>
-                {q.score != null && (
-                  <span style={{ fontSize: 12, fontWeight: 700, color: gradeColors[q.grade] || 'var(--accent)', fontFamily: 'Geist Mono, monospace', flexShrink: 0 }}>
-                    {q.score}
-                  </span>
-                )}
+            {stage1.elimination_reasons.map((r, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 4 }}>
+                <AlertTriangle size={11} color="var(--danger)" />
+                <span style={{ fontSize: 12, color: 'var(--danger)' }}>{r}</span>
               </div>
             ))}
-            {questions.length > 3 && (
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', textAlign: 'center' }}>
-                +{questions.length - 3} more questions
-              </span>
-            )}
           </div>
         </div>
       )}
+    </div>
+  )
+}
 
-      {/* Video link */}
-      {(interview?.video_url || interview?.recording_url) && (
+function SemanticSimilarityContent({ stage2 }) {
+  if (!stage2) return <PendingMessage />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+        <MiniStat label="Total Score" value={stage2.total_score != null ? Math.round(stage2.total_score) : '--'} suffix="/100" />
+        <MiniStat label="Skills" value={stage2.skills_match_score != null ? Math.round(stage2.skills_match_score) : '--'} suffix="/100" />
+        <MiniStat label="Experience" value={stage2.experience_relevance_score != null ? Math.round(stage2.experience_relevance_score) : '--'} suffix="/100" />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <MiniStat label="Education" value={stage2.education_relevance_score != null ? Math.round(stage2.education_relevance_score) : '--'} suffix="/100" />
+        <MiniStat label="Rank" value={stage2.rank != null ? `#${stage2.rank}` : '--'} isText />
+      </div>
+      {stage2.passed !== null && stage2.passed !== undefined && (
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          padding: '5px 10px', borderRadius: 5,
+          background: stage2.passed ? 'rgba(52,211,153,0.1)' : 'rgba(248,113,113,0.1)',
+          border: `1px solid ${stage2.passed ? 'rgba(52,211,153,0.3)' : 'rgba(248,113,113,0.3)'}`,
+          fontSize: 12, fontWeight: 700,
+          color: stage2.passed ? '#34d399' : '#f87171',
+        }}>
+          {stage2.passed ? <CheckCircle size={13} /> : <XCircle size={13} />}
+          {stage2.passed ? 'Passed to next stage' : 'Did not advance'}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function LLMEvaluationContent({ stage3 }) {
+  if (!stage3) return <PendingMessage />
+  const grades = [
+    { label: 'Trajectory', grade: stage3.trajectory_grade, rationale: stage3.trajectory_rationale },
+    { label: 'Growth', grade: stage3.growth_grade, rationale: stage3.growth_rationale },
+    { label: 'Achievement', grade: stage3.achievement_quality_grade, rationale: stage3.achievement_quality_rationale },
+    { label: 'Consistency', grade: stage3.consistency_grade, rationale: stage3.consistency_rationale },
+  ]
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+        <MiniStat label="LLM Score" value={stage3.stage3_score != null ? Math.round(stage3.stage3_score) : '--'} suffix="/100" />
+        <MiniStat label="Result" value={stage3.passed ? 'Passed' : 'Failed'} isText />
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+        {grades.map(g => g.grade && (
+          <div key={g.label} style={{ padding: '10px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: g.rationale ? 4 : 0 }}>
+              <span style={{ fontSize: 11, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>{g.label}</span>
+              <span style={{
+                fontSize: 14, fontWeight: 800,
+                color: gradeColors[g.grade] || 'var(--text-primary)',
+                fontFamily: 'Geist Mono, monospace',
+              }}>{g.grade}</span>
+            </div>
+            {g.rationale && (
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>{g.rationale}</p>
+            )}
+          </div>
+        ))}
+      </div>
+      {stage3.fail_reasons && stage3.fail_reasons.length > 0 && (
+        <div>
+          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Fail Reasons</span>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginTop: 6 }}>
+            {stage3.fail_reasons.map((r, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 8px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 4 }}>
+                <AlertTriangle size={11} color="var(--danger)" />
+                <span style={{ fontSize: 12, color: 'var(--danger)' }}>{r}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VideoInterviewContent({ interview, interviewScores }) {
+  if (!interview) return <PendingMessage message="Video interview not yet conducted" />
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
+        <MiniStat label="Status" value={interview.status || '--'} isText />
+        <MiniStat label="Duration" value={interview.duration_seconds ? `${Math.round(interview.duration_seconds / 60)} min` : '--'} isText />
+        <MiniStat label="Score" value={interviewScores?.stage6_score != null ? Math.round(interviewScores.stage6_score) : '--'} suffix={interviewScores?.stage6_score != null ? '/100' : ''} />
+      </div>
+      {interview.status === 'pending' && interview.interview_link && (
+        <a
+          href={interview.interview_link}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            padding: '9px 16px',
+            background: 'var(--accent)',
+            color: '#fff',
+            borderRadius: 7,
+            fontSize: 13,
+            fontWeight: 600,
+            textDecoration: 'none',
+          }}
+        >
+          <Play size={14} /> Start Interview
+        </a>
+      )}
+      {interview.video_url && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.15)', borderRadius: 6 }}>
           <Play size={13} color="var(--accent)" />
           <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}>Video recording available</span>
         </div>
       )}
-
-      {(stage?.notes || stage?.ai_summary) && (
-        <AISummaryBox text={stage.notes || stage.ai_summary} />
-      )}
     </div>
   )
 }
 
-function RecruiterReviewContent({ stage, candidate: c }) {
-  if (!stage?.status || stage.status === 'pending') {
-    return <PendingMessage message="Awaiting recruiter review" />
-  }
+function HiredContent({ application }) {
+  if (application.status !== 'hired') return <PendingMessage message="Not yet hired" />
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-        <MiniStat label="Decision" value={stage.status === 'pass' || stage.status === 'shortlisted' ? 'Shortlisted' : stage.status === 'fail' || stage.status === 'rejected' ? 'Rejected' : stage.status} isText />
-        <MiniStat label="Decided" value={stage.date ? new Date(stage.date).toLocaleDateString() : '--'} isText />
-      </div>
-      {stage.notes && (
-        <div style={{ padding: '10px 12px', background: 'var(--bg-primary)', border: '1px solid var(--border)', borderRadius: 6 }}>
-          <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Recruiter Notes</span>
-          <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginTop: 4 }}>{stage.notes}</p>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function OfferStageContent({ stage, candidate: c }) {
-  if (!stage?.status || stage.status === 'pending') {
-    return <PendingMessage message="Offer not yet generated" />
-  }
-  const offer = stage.offer_details || c.offer || {}
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-        <MiniStat label="Salary" value={offer.salary ? `$${Number(offer.salary).toLocaleString()}` : '--'} isText />
-        <MiniStat label="Start Date" value={offer.start_date ? new Date(offer.start_date).toLocaleDateString() : '--'} isText />
-        <MiniStat label="DocuSign" value={offer.docusign_status || stage.status || '--'} isText />
-      </div>
-      {(offer.offer_letter_url || stage.offer_url) && (
-        <a
-          href={offer.offer_letter_url || stage.offer_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '8px 10px', background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.15)', borderRadius: 6, textDecoration: 'none' }}
-        >
-          <FileText size={13} color="var(--accent)" />
-          <span style={{ fontSize: 12, color: 'var(--accent)', fontWeight: 500 }}>View offer letter</span>
-        </a>
-      )}
-      {stage.notes && <AISummaryBox text={stage.notes} />}
-    </div>
-  )
-}
-
-// ─── Assessments Tab ───────────────────────────────────────────
-function AssessmentsTab({ assessment, candidate: c }) {
-  const bigFive = assessment?.big_five || assessment?.personality || c.big_five || []
-  const cognitive = assessment?.cognitive || c.cognitive || []
-  const language = assessment?.language || c.language || null
-
-  const BIG_FIVE_INTERPRETATIONS = {
-    Openness: { high: 'High openness suggests creativity, intellectual curiosity, and willingness to explore new approaches. Likely to innovate and adapt to changing requirements.', low: 'Lower openness may indicate preference for established methods and practical, concrete thinking.' },
-    Conscientiousness: { high: 'High conscientiousness indicates strong organization, reliability, and self-discipline. Likely to meet deadlines and maintain high quality standards.', low: 'Lower conscientiousness may suggest flexibility but potential challenges with structure and follow-through.' },
-    Extraversion: { high: 'High extraversion suggests strong communication skills, team energy, and comfort in collaborative environments.', low: 'Lower extraversion indicates preference for focused, independent work. May excel in deep-thinking roles.' },
-    Agreeableness: { high: 'High agreeableness shows strong empathy, cooperation, and team orientation. Natural collaborator.', low: 'Lower agreeableness may indicate directness and willingness to challenge ideas. Can be valuable in critical roles.' },
-    Neuroticism: { high: 'Higher neuroticism suggests emotional sensitivity. May benefit from structured support and clear expectations.', low: 'Low neuroticism indicates emotional stability and resilience under pressure. Handles stress well.' },
-  }
-
-  const COGNITIVE_INTERPRETATIONS = {
-    'Problem Solving': 'Measures logical reasoning and ability to decompose complex problems into structured solutions.',
-    'Numerical': 'Assesses quantitative reasoning, data interpretation, and mathematical aptitude.',
-    'Verbal': 'Evaluates reading comprehension, vocabulary, and verbal reasoning ability.',
-    'Logical': 'Tests pattern recognition and deductive reasoning capability.',
-    'Pattern Recognition': 'Measures ability to identify patterns, sequences, and abstract relationships.',
-    'Memory': 'Assesses working memory capacity and information retention.',
-    'Attention': 'Measures sustained focus, selective attention, and resistance to distraction.',
-  }
-
-  if (!bigFive.length && !cognitive.length && !language) {
-    return <EmptyState icon={Brain} title="No Assessment Data" description="Assessment has not been completed yet." />
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-      {/* Big Five Personality */}
-      {bigFive.length > 0 && (
-        <Section title="Big Five Personality" icon={Heart}>
-          <PersonalityRadar data={bigFive} />
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 16 }}>
-            {bigFive.map(b => {
-              const factor = b.factor || b.name
-              const score = b.score || b.value || 0
-              const interp = BIG_FIVE_INTERPRETATIONS[factor]
-              const description = interp ? (score >= 50 ? interp.high : interp.low) : null
-              return (
-                <div key={factor} style={{
-                  padding: '12px 14px',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-                    <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{factor}</span>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--accent)' : 'var(--warning)' }}>
-                        {score}/100
-                      </span>
-                      {b.percentile != null && (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>
-                          {b.percentile}th %ile
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                  <div style={{ height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden', marginBottom: 8 }}>
-                    <div style={{ width: `${score}%`, height: '100%', background: score >= 70 ? 'var(--success)' : score >= 40 ? 'var(--accent)' : 'var(--warning)', borderRadius: 2 }} />
-                  </div>
-                  {description && (
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, fontStyle: 'italic' }}>
-                      {description}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* Cognitive Aptitude */}
-      {cognitive.length > 0 && (
-        <Section title="Cognitive Aptitude" icon={Zap}>
-          {/* Overall percentile */}
-          {(assessment?.cognitive_percentile || assessment?.cognitive?.percentile) && (
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 16, marginBottom: 16,
-              padding: '14px 16px', background: 'rgba(129,140,248,0.05)', border: '1px solid rgba(129,140,248,0.15)', borderRadius: 8,
-            }}>
-              <ScoreCircle score={assessment.cognitive_percentile || assessment.cognitive?.percentile || 0} size={56} label="" />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>Overall Cognitive Percentile</div>
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                  Scored higher than {assessment.cognitive_percentile || assessment.cognitive?.percentile || 0}% of test takers
-                </div>
-              </div>
-            </div>
-          )}
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {(Array.isArray(cognitive) ? cognitive : []).map(item => {
-              const name = item.name || item.category
-              const score = item.score || item.value || 0
-              return (
-                <div key={name} style={{
-                  padding: '12px 14px',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid var(--border)',
-                  borderRadius: 8,
-                }}>
-                  <ScoreBar score={score} label={name} height={8} />
-                  {COGNITIVE_INTERPRETATIONS[name] && (
-                    <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 6, lineHeight: 1.4 }}>
-                      {COGNITIVE_INTERPRETATIONS[name]}
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </Section>
-      )}
-
-      {/* Language Proficiency */}
-      {language && (
-        <Section title="Language Proficiency" icon={Globe}>
-          <div style={{ display: 'flex', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-            <div style={{
-              padding: '16px 24px', background: 'rgba(129,140,248,0.1)',
-              border: '1px solid rgba(129,140,248,0.25)', borderRadius: 12, textAlign: 'center',
-            }}>
-              <div style={{ fontSize: 32, fontWeight: 800, color: 'var(--accent)', fontFamily: 'Geist Mono, monospace' }}>{language.level}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>CEFR Level</div>
-              {language.score != null && (
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-secondary)', marginTop: 4, fontFamily: 'Geist Mono, monospace' }}>{language.score}/100</div>
-              )}
-            </div>
-            <div style={{ flex: 1, minWidth: 200, display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {language.reading != null && (
-                <div style={{ padding: '10px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                  <ScoreBar score={language.reading} label="Reading" height={6} />
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Comprehension of written technical and business content.</p>
-                </div>
-              )}
-              {language.writing != null && (
-                <div style={{ padding: '10px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                  <ScoreBar score={language.writing} label="Writing" height={6} />
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Clarity, grammar, and professional writing ability assessed by LLM evaluation.</p>
-                </div>
-              )}
-              {language.listening != null && (
-                <div style={{ padding: '10px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8 }}>
-                  <ScoreBar score={language.listening} label="Listening" height={6} />
-                  <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>Ability to understand spoken English in professional contexts.</p>
-                </div>
-              )}
-            </div>
-          </div>
-        </Section>
-      )}
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'rgba(52,211,153,0.08)', border: '1px solid rgba(52,211,153,0.2)', borderRadius: 6 }}>
+      <CheckCircle size={14} color="#34d399" />
+      <span style={{ fontSize: 13, color: '#34d399', fontWeight: 600 }}>Candidate has been hired</span>
     </div>
   )
 }
 
 // ─── Interview Tab ─────────────────────────────────────────────
-function InterviewTab({ interview, transcript, candidate: c }) {
+function InterviewTab({ interview, interviewScores }) {
   const [showTranscript, setShowTranscript] = useState(true)
-  const questions = interview?.questions || c.interview_questions || []
-  const transcriptData = transcript?.turns || transcript?.messages || (Array.isArray(transcript) ? transcript : c.transcript) || []
-  const flags = interview?.behavioral_flags || c.behavioral_flags || []
-  const fillerCount = interview?.filler_count ?? c.filler_count ?? 0
-  const videoUrl = interview?.video_url || interview?.recording_url || null
 
-  if (!questions.length && !transcriptData.length && !videoUrl) {
+  if (!interview) {
     return <EmptyState icon={Video} title="No Interview Data" description="Interview has not been conducted yet." />
   }
 
-  // Response length distribution for chart
-  const responseLengths = transcriptData
-    .filter(t => t.speaker === 'Candidate' || t.speaker === 'candidate')
-    .map((t, i) => ({
-      question: `Q${i + 1}`,
-      words: (t.text || '').split(/\s+/).length,
-    }))
+  const transcriptText = interview.formatted_transcript || ''
+  const videoUrl = interview.video_url || null
+  const questionScores = interviewScores?.question_scores || null
+  const behavioralFlags = interviewScores?.behavioral_flags || []
+  const fillerAnalysis = interviewScores?.filler_word_analysis || null
+  const assessmentSummary = interviewScores?.assessment_summary || null
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Video Player */}
+      {/* Start interview link if pending */}
+      {interview.status === 'pending' && interview.interview_link && (
+        <div style={{ padding: '16px', background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.2)', borderRadius: 8 }}>
+          <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+            The interview has been scheduled and is ready to begin.
+          </p>
+          <a
+            href={interview.interview_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 8, padding: '9px 18px', background: 'var(--accent)', color: '#fff', borderRadius: 7, fontSize: 13, fontWeight: 600, textDecoration: 'none' }}
+          >
+            <Play size={14} /> Start Interview
+          </a>
+        </div>
+      )}
+
+      {/* Video player */}
       {videoUrl && (
         <Section title="Recording" icon={Video}>
           <VideoPlayer src={videoUrl} />
         </Section>
       )}
 
-      {/* Question Grades */}
-      {questions.length > 0 && (
-        <Section title="Question Grades" icon={BarChart3}>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-            {questions.map((q, i) => (
-              <div key={i} style={{
-                padding: '12px 14px',
-                background: 'var(--bg-secondary)',
-                border: '1px solid var(--border)',
-                borderRadius: 8,
-              }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 6 }}>
-                  <span style={{
-                    fontSize: 10, fontWeight: 800, color: '#fff',
-                    background: gradeColors[q.grade] || 'var(--accent)',
-                    borderRadius: 4, padding: '2px 7px', flexShrink: 0, marginTop: 1,
-                  }}>{q.grade}</span>
-                  <span style={{ fontSize: 13, color: 'var(--text-primary)', flex: 1 }}>{q.question}</span>
-                  {q.score != null && (
-                    <span style={{ fontSize: 14, fontWeight: 700, color: gradeColors[q.grade] || 'var(--accent)', fontFamily: 'Geist Mono, monospace', flexShrink: 0 }}>{q.score}</span>
-                  )}
-                </div>
-                {q.notes && <p style={{ fontSize: 12, color: 'var(--text-muted)', paddingLeft: 36, lineHeight: 1.5 }}>{q.notes}</p>}
+      {/* Scores */}
+      {interviewScores && (
+        <Section title="Interview Scores" icon={BarChart3}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 12 }}>
+            <MiniStat label="Stage 6 Score" value={interviewScores.stage6_score != null ? Math.round(interviewScores.stage6_score) : '--'} suffix="/100" />
+            <MiniStat label="Final Composite" value={interviewScores.final_composite != null ? Math.round(interviewScores.final_composite) : '--'} suffix="/100" />
+            <MiniStat label="Relevance Avg" value={interviewScores.relevance_avg != null ? Math.round(interviewScores.relevance_avg * 10) / 10 : '--'} suffix="/5" />
+            <MiniStat label="Depth Avg" value={interviewScores.depth_avg != null ? Math.round(interviewScores.depth_avg * 10) / 10 : '--'} suffix="/5" />
+            <MiniStat label="Accuracy Avg" value={interviewScores.accuracy_avg != null ? Math.round(interviewScores.accuracy_avg * 10) / 10 : '--'} suffix="/5" />
+            <MiniStat label="Communication" value={interviewScores.communication_avg != null ? Math.round(interviewScores.communication_avg * 10) / 10 : '--'} suffix="/5" />
+          </div>
+
+          {/* Soft evaluations */}
+          {[
+            { label: 'Profile Consistency', grade: interviewScores.profile_consistency_grade, rationale: interviewScores.profile_consistency_rationale },
+            { label: 'Motivation & Fit', grade: interviewScores.motivation_fit_grade, rationale: interviewScores.motivation_fit_rationale },
+            { label: 'Composure', grade: interviewScores.composure_grade, rationale: interviewScores.composure_rationale },
+          ].filter(g => g.grade).map(g => (
+            <div key={g.label} style={{ padding: '10px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7, marginBottom: 8 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: g.rationale ? 4 : 0 }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)' }}>{g.label}</span>
+                <span style={{ fontSize: 14, fontWeight: 800, color: gradeColors[g.grade] || 'var(--accent)', fontFamily: 'Geist Mono, monospace' }}>
+                  {g.grade}
+                </span>
+              </div>
+              {g.rationale && (
+                <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.4 }}>{g.rationale}</p>
+              )}
+            </div>
+          ))}
+
+          {/* Assessment summary */}
+          {assessmentSummary && <AISummaryBox text={assessmentSummary} />}
+        </Section>
+      )}
+
+      {/* Behavioral flags */}
+      {Array.isArray(behavioralFlags) && behavioralFlags.length > 0 && (
+        <Section title="Behavioral Flags" icon={AlertTriangle}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {behavioralFlags.map((flag, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '8px 10px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6 }}>
+                <AlertTriangle size={13} color="var(--danger)" style={{ marginTop: 1, flexShrink: 0 }} />
+                <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+                  {typeof flag === 'string' ? flag : (flag.description || JSON.stringify(flag))}
+                </span>
               </div>
             ))}
           </div>
         </Section>
       )}
 
-      {/* Behavioral Analysis */}
-      <Section title="Behavioral Analysis" icon={Activity}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 10, marginBottom: 12 }}>
-          <div style={{ padding: '12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: fillerCount > 20 ? 'var(--warning)' : 'var(--success)', fontFamily: 'Geist Mono, monospace' }}>{fillerCount}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Filler Words</div>
-          </div>
-          <div style={{ padding: '12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-primary)', fontFamily: 'Geist Mono, monospace' }}>{transcriptData.length}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Total Turns</div>
-          </div>
-          <div style={{ padding: '12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, textAlign: 'center' }}>
-            <div style={{ fontSize: 22, fontWeight: 700, color: flags.length > 3 ? 'var(--danger)' : 'var(--text-primary)', fontFamily: 'Geist Mono, monospace' }}>{flags.length}</div>
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>Behavioral Flags</div>
-          </div>
-        </div>
-
-        {flags.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
-            {flags.map((flag, i) => (
-              <div key={i} style={{
-                display: 'flex', alignItems: 'flex-start', gap: 8,
-                padding: '8px 10px', background: 'rgba(248,113,113,0.08)',
-                border: '1px solid rgba(248,113,113,0.2)', borderRadius: 6,
-              }}>
-                <AlertTriangle size={13} color="var(--danger)" style={{ marginTop: 1, flexShrink: 0 }} />
-                <div>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--danger)' }}>{flag.type}: </span>
-                  <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{flag.description}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Response length distribution */}
-        {responseLengths.length > 0 && (
-          <div style={{ marginTop: 8 }}>
-            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Response Length Distribution (words)</span>
-            <div style={{ marginTop: 8, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, padding: '12px 4px 4px 0' }}>
-              <ResponsiveContainer width="100%" height={160}>
-                <BarChart data={responseLengths}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
-                  <XAxis dataKey="question" tick={{ fill: '#71717a', fontSize: 10 }} stroke="#3f3f46" />
-                  <YAxis tick={{ fill: '#71717a', fontSize: 10 }} stroke="#3f3f46" width={32} />
-                  <Tooltip
-                    contentStyle={{ background: '#18181b', border: '1px solid #3f3f46', borderRadius: 8, fontSize: 12 }}
-                    formatter={(value) => [`${value} words`, 'Length']}
-                  />
-                  <Bar dataKey="words" fill="#818cf8" radius={[3, 3, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </div>
-        )}
-      </Section>
-
-      {/* Full Transcript */}
-      {transcriptData.length > 0 && (
+      {/* Transcript */}
+      {transcriptText && (
         <Section title="Transcript" icon={MessageSquare}>
           <button
             onClick={() => setShowTranscript(!showTranscript)}
@@ -1126,11 +869,11 @@ function InterviewTab({ interview, transcript, candidate: c }) {
             {showTranscript ? 'Hide transcript' : 'Show transcript'}
           </button>
           {showTranscript && (
-            <TranscriptViewer
-              transcript={transcriptData}
-              flags={flags}
-              fillerCount={fillerCount}
-            />
+            <div style={{ padding: '12px 14px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 8, maxHeight: 400, overflowY: 'auto' }}>
+              <pre style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.7, whiteSpace: 'pre-wrap', fontFamily: 'Geist Mono, monospace' }}>
+                {transcriptText}
+              </pre>
+            </div>
           )}
         </Section>
       )}
@@ -1139,7 +882,7 @@ function InterviewTab({ interview, transcript, candidate: c }) {
 }
 
 // ─── Facial Analysis Tab ───────────────────────────────────────
-function FacialAnalysisTab({ facialAnalysis, assessment }) {
+function FacialAnalysisTab({ facialAnalysis }) {
   if (!facialAnalysis) {
     return (
       <EmptyState
@@ -1151,33 +894,26 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
   }
 
   const fa = facialAnalysis
-  const bigFiveAssessment = assessment?.big_five || assessment?.personality || []
-  const bigFiveFacial = fa.big_five_facial || fa.personality_from_face || []
-
-  // Prepare comparison data for radar chart
-  const comparisonData = bigFiveFacial.map(bf => {
-    const matchingAssessment = bigFiveAssessment.find(
-      a => (a.factor || a.name) === (bf.factor || bf.name)
-    )
-    return {
-      subject: bf.factor || bf.name,
-      facial: bf.score || bf.value || 0,
-      assessment: matchingAssessment ? (matchingAssessment.score || matchingAssessment.value || 0) : 0,
-      fullMark: 100,
-    }
-  })
 
   const metrics = [
-    { key: 'confidence', label: 'Confidence', icon: Shield, description: fa.confidence_description || 'Overall confidence level demonstrated through facial expressions, eye contact, and composure.' },
-    { key: 'engagement', label: 'Engagement', icon: Target, description: fa.engagement_description || 'Level of active attention and interest shown throughout the interview.' },
-    { key: 'stress_tolerance', label: 'Stress Tolerance', icon: Activity, description: fa.stress_description || 'Ability to maintain composure under challenging questions.' },
-    { key: 'communication_style', label: 'Communication Style', icon: MessageSquare, description: fa.communication_description || 'Non-verbal communication effectiveness and expressiveness.' },
-    { key: 'authenticity', label: 'Authenticity', icon: Heart, description: fa.authenticity_description || 'Congruence between verbal and non-verbal cues suggesting genuine responses.' },
+    { key: 'confidence_score', label: 'Confidence', icon: Shield, description: 'Overall confidence level demonstrated through facial expressions, eye contact, and composure.' },
+    { key: 'engagement_score', label: 'Engagement', icon: Target, description: 'Level of active attention and interest shown throughout the interview.' },
+    { key: 'stress_tolerance_score', label: 'Stress Tolerance', icon: Activity, description: 'Ability to maintain composure under challenging questions.' },
+    { key: 'communication_style_score', label: 'Communication Style', icon: MessageSquare, description: 'Non-verbal communication effectiveness and expressiveness.' },
+    { key: 'authenticity_score', label: 'Authenticity', icon: Heart, description: 'Congruence between verbal and non-verbal cues suggesting genuine responses.' },
   ]
+
+  const bigFiveFacial = [
+    { label: 'Openness', value: fa.facial_openness },
+    { label: 'Conscientiousness', value: fa.facial_conscientiousness },
+    { label: 'Extraversion', value: fa.facial_extraversion },
+    { label: 'Agreeableness', value: fa.facial_agreeableness },
+    { label: 'Neuroticism', value: fa.facial_neuroticism },
+  ].filter(x => x.value != null)
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-      {/* Header with thumbnail and overall score */}
+      {/* Header */}
       <div style={{
         display: 'flex', gap: 20, alignItems: 'center',
         padding: '16px',
@@ -1185,25 +921,18 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
         border: '1px solid var(--border)',
         borderRadius: 10,
       }}>
-        {fa.face_thumbnail_url ? (
-          <img
-            src={fa.face_thumbnail_url}
-            alt="Face thumbnail"
-            style={{ width: 72, height: 72, borderRadius: 12, objectFit: 'cover', border: '2px solid var(--border)' }}
-          />
-        ) : (
-          <div style={{ width: 72, height: 72, borderRadius: 12, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <Eye size={24} color="var(--text-muted)" />
-          </div>
-        )}
+        <div style={{ width: 72, height: 72, borderRadius: 12, background: 'var(--bg-tertiary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <Eye size={24} color="var(--text-muted)" />
+        </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 4 }}>Facial Analysis Results</div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            AI-powered analysis of facial expressions, micro-expressions, and behavioral cues during interview
+            AI-powered analysis of facial expressions, micro-expressions, and behavioral cues during interview.
+            {fa.frames_analyzed && ` ${fa.frames_analyzed} frames analyzed.`}
           </div>
         </div>
         {fa.overall_score != null && (
-          <ScoreCircle score={fa.overall_score} size={72} label="Overall" />
+          <ScoreCircle score={Math.round(fa.overall_score)} size={72} label="Overall" />
         )}
       </div>
 
@@ -1211,13 +940,13 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
       <Section title="Composite Scores" icon={BarChart3}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {metrics.map(m => {
-            const score = fa[m.key] ?? fa[`${m.key}_score`] ?? null
+            const score = fa[m.key]
             if (score == null) return null
             return (
               <FacialAnalysisCard
                 key={m.key}
                 label={m.label}
-                score={score}
+                score={Math.round(score)}
                 description={m.description}
                 icon={m.icon}
               />
@@ -1226,42 +955,31 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
         </div>
       </Section>
 
-      {/* Big Five Comparison */}
-      {comparisonData.length > 0 && bigFiveAssessment.length > 0 && (
-        <Section title="Big Five: Facial vs Assessment Comparison" icon={Brain}>
-          <div style={{
-            background: 'var(--bg-secondary)',
-            border: '1px solid var(--border)',
-            borderRadius: 10,
-            padding: '16px 8px',
-          }}>
-            <ResponsiveContainer width="100%" height={300}>
-              <RechartsRadar data={comparisonData} margin={{ top: 10, right: 30, bottom: 10, left: 30 }}>
-                <PolarGrid stroke="#3f3f46" />
-                <PolarAngleAxis dataKey="subject" tick={{ fill: '#a1a1aa', fontSize: 11 }} />
-                <Radar name="Facial Analysis" dataKey="facial" stroke="#818cf8" fill="#818cf8" fillOpacity={0.15} strokeWidth={2} />
-                <Radar name="Assessment" dataKey="assessment" stroke="#34d399" fill="#34d399" fillOpacity={0.1} strokeWidth={2} strokeDasharray="4 4" />
-                <Tooltip contentStyle={{ background: '#18181b', border: '1px solid #3f3f46', borderRadius: 8 }} />
-              </RechartsRadar>
-            </ResponsiveContainer>
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 20, marginTop: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-                <div style={{ width: 12, height: 3, background: '#818cf8', borderRadius: 1 }} />
-                Facial Analysis
+      {/* Big Five from Facial */}
+      {bigFiveFacial.length > 0 && (
+        <Section title="Personality from Facial Analysis" icon={Brain}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            {bigFiveFacial.map(b => (
+              <div key={b.label} style={{ padding: '10px 12px', background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 7 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{b.label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: b.value >= 70 ? 'var(--success)' : b.value >= 40 ? 'var(--accent)' : 'var(--warning)' }}>
+                    {Math.round(b.value)}/100
+                  </span>
+                </div>
+                <div style={{ height: 4, background: 'var(--bg-tertiary)', borderRadius: 2, overflow: 'hidden' }}>
+                  <div style={{ width: `${b.value}%`, height: '100%', background: b.value >= 70 ? 'var(--success)' : b.value >= 40 ? 'var(--accent)' : 'var(--warning)', borderRadius: 2 }} />
+                </div>
               </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
-                <div style={{ width: 12, height: 3, background: '#34d399', borderRadius: 1, borderTop: '1px dashed #34d399' }} />
-                Assessment
-              </div>
-            </div>
+            ))}
           </div>
         </Section>
       )}
 
       {/* Emotion Timeline */}
-      {(fa.timeline_data || fa.emotion_timeline) && (
+      {fa.timeline_data && (
         <Section title="Emotion Timeline" icon={TrendingUp}>
-          <EmotionTimeline data={fa.timeline_data || fa.emotion_timeline} height={250} />
+          <EmotionTimeline data={fa.timeline_data} height={250} />
         </Section>
       )}
 
@@ -1277,31 +995,14 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
                 border: '1px solid var(--border)',
                 borderRadius: 8,
               }}>
-                <span style={{
-                  fontSize: 11, fontWeight: 700, fontFamily: 'Geist Mono, monospace',
-                  color: 'var(--accent)', flexShrink: 0, minWidth: 40,
-                }}>
+                <span style={{ fontSize: 11, fontWeight: 700, fontFamily: 'Geist Mono, monospace', color: 'var(--accent)', flexShrink: 0, minWidth: 40 }}>
                   {typeof moment.timestamp === 'number'
                     ? `${Math.floor(moment.timestamp / 60)}:${String(Math.floor(moment.timestamp % 60)).padStart(2, '0')}`
                     : moment.timestamp || '--'}
                 </span>
-                <div style={{ flex: 1 }}>
-                  <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                    {moment.description || moment.text}
-                  </p>
-                </div>
-                {(moment.emotion || moment.emotion_badge) && (
-                  <Badge
-                    label={moment.emotion || moment.emotion_badge}
-                    variant={
-                      (moment.emotion || '').toLowerCase() === 'confidence' ? 'success'
-                        : (moment.emotion || '').toLowerCase() === 'stress' ? 'danger'
-                        : (moment.emotion || '').toLowerCase() === 'engagement' ? 'accent'
-                        : 'default'
-                    }
-                    size="xs"
-                  />
-                )}
+                <p style={{ flex: 1, fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                  {moment.description || moment.text}
+                </p>
               </div>
             ))}
           </div>
@@ -1309,14 +1010,14 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
       )}
 
       {/* Action Unit Breakdown */}
-      {(fa.action_units || fa.au_values) && (
+      {fa.action_unit_averages && (
         <Section title="" icon={null}>
-          <ActionUnitBreakdown data={fa.action_units || fa.au_values} />
+          <ActionUnitBreakdown data={fa.action_unit_averages} />
         </Section>
       )}
 
-      {/* AI Narrative Summary */}
-      {(fa.narrative_summary || fa.ai_summary) && (
+      {/* AI Summary */}
+      {fa.ai_summary && (
         <Section title="AI Narrative Summary" icon={Sparkles}>
           <div style={{
             padding: '16px',
@@ -1325,7 +1026,7 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
             borderRadius: 8,
           }}>
             <p style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.8, whiteSpace: 'pre-wrap' }}>
-              {fa.narrative_summary || fa.ai_summary}
+              {fa.ai_summary}
             </p>
           </div>
         </Section>
@@ -1335,37 +1036,15 @@ function FacialAnalysisTab({ facialAnalysis, assessment }) {
 }
 
 // ─── Documents Tab ─────────────────────────────────────────────
-function DocumentsTab({ candidate: c, assessment }) {
+function DocumentsTab({ candidate: c }) {
   const documents = []
 
-  if (c.resume_url || c.cv_url) {
-    documents.push({
-      name: 'Resume / CV',
-      url: c.resume_url || c.cv_url,
-      type: 'PDF',
-      icon: FileText,
-      size: c.resume_size || null,
-    })
+  if (c.cv_file_url) {
+    documents.push({ name: 'Resume / CV', url: c.cv_file_url, type: 'PDF', icon: FileText })
   }
 
-  if (c.offer_letter_url || c.offer?.offer_letter_url) {
-    documents.push({
-      name: 'Offer Letter',
-      url: c.offer_letter_url || c.offer?.offer_letter_url,
-      type: 'PDF',
-      icon: Send,
-      size: null,
-    })
-  }
-
-  if (assessment?.report_url) {
-    documents.push({
-      name: 'Assessment Report',
-      url: assessment.report_url,
-      type: 'PDF',
-      icon: ClipboardList,
-      size: null,
-    })
+  if (c.linkedin_url) {
+    documents.push({ name: 'LinkedIn Profile', url: c.linkedin_url, type: 'URL', icon: User })
   }
 
   if (documents.length === 0) {
@@ -1388,9 +1067,7 @@ function DocumentsTab({ candidate: c, assessment }) {
               <DocIcon size={18} color="var(--accent)" />
               <div>
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{doc.name}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                  {doc.type}{doc.size ? ` \u00b7 ${doc.size}` : ''}
-                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{doc.type}</div>
               </div>
             </div>
             <a
@@ -1408,7 +1085,7 @@ function DocumentsTab({ candidate: c, assessment }) {
                 textDecoration: 'none',
               }}
             >
-              <Download size={13} /> Download
+              <Download size={13} /> {doc.type === 'URL' ? 'Open' : 'Download'}
             </a>
           </div>
         )
@@ -1428,6 +1105,15 @@ function InfoChip({ icon: Icon, text }) {
   )
 }
 
+function InfoRow({ label, value }) {
+  return (
+    <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-muted)', minWidth: 100, flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 12, color: 'var(--text-primary)', textTransform: 'capitalize' }}>{value}</span>
+    </div>
+  )
+}
+
 function Section({ title, children, icon: Icon }) {
   return (
     <div>
@@ -1439,26 +1125,6 @@ function Section({ title, children, icon: Icon }) {
       )}
       {children}
     </div>
-  )
-}
-
-function ActionButton({ icon: Icon, label, color, outline = false, onClick }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        width: '100%', display: 'flex', alignItems: 'center', gap: 8,
-        padding: '9px 12px',
-        background: outline ? 'transparent' : `${color}18`,
-        border: `1px solid ${color}40`,
-        borderRadius: 7, color, fontSize: 13, fontWeight: 600,
-        textAlign: 'left', transition: 'all 0.12s', cursor: 'pointer',
-      }}
-      onMouseEnter={e => { e.currentTarget.style.background = `${color}28` }}
-      onMouseLeave={e => { e.currentTarget.style.background = outline ? 'transparent' : `${color}18` }}
-    >
-      <Icon size={14} /> {label}
-    </button>
   )
 }
 
@@ -1486,7 +1152,7 @@ function MiniStat({ label, value, suffix = '', isText = false }) {
       textAlign: 'center',
     }}>
       <div style={{
-        fontSize: isText ? 14 : 18,
+        fontSize: isText ? 13 : 18,
         fontWeight: 700,
         color: 'var(--text-primary)',
         fontFamily: isText ? 'Geist, system-ui' : 'Geist Mono, monospace',
@@ -1500,7 +1166,7 @@ function MiniStat({ label, value, suffix = '', isText = false }) {
 }
 
 function ScoreCard({ label, score, icon: Icon, description }) {
-  if (score == null || score === undefined) {
+  if (score == null) {
     return (
       <div style={{
         padding: '14px 16px',
@@ -1529,7 +1195,7 @@ function ScoreCard({ label, score, icon: Icon, description }) {
       borderRadius: 10,
       display: 'flex', alignItems: 'center', gap: 12,
     }}>
-      <ScoreCircle score={score} size={46} label="" />
+      <ScoreCircle score={Math.round(score)} size={46} label="" />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{label}</div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{description}</div>

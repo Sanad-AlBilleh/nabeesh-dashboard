@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Users, Filter, X, ChevronDown, ChevronUp, ChevronsUpDown } from 'lucide-react'
 import { format } from 'date-fns'
@@ -8,57 +8,92 @@ import ScoreBar from '../components/ScoreBar'
 import SearchInput from '../components/SearchInput'
 import EmptyState from '../components/EmptyState'
 import { SkeletonTable } from '../components/LoadingSpinner'
-
-const MOCK_CANDIDATES = [
-  { id: '1', name: 'Marcus Johnson', email: 'marcus@email.com', job_title: 'Senior Backend Engineer', composite_score: 87, stage: 'shortlisted', source: 'linkedin', last_activity: '2026-03-15', assessment_status: 'completed', skills: ['Node.js', 'PostgreSQL', 'AWS'] },
-  { id: '2', name: 'Sarah Chen', email: 'sarah@email.com', job_title: 'Product Designer', composite_score: 79, stage: 'interview', source: 'indeed', last_activity: '2026-03-14', assessment_status: 'completed', skills: ['Figma', 'UX Research', 'Prototyping'] },
-  { id: '3', name: 'Ahmed Al-Rashid', email: 'ahmed@email.com', job_title: 'Senior Backend Engineer', composite_score: 72, stage: 'screening', source: 'direct', last_activity: '2026-03-13', assessment_status: 'pending', skills: ['Python', 'Django', 'Redis'] },
-  { id: '4', name: 'Priya Patel', email: 'priya@email.com', job_title: 'Data Scientist', composite_score: 68, stage: 'applied', source: 'linkedin', last_activity: '2026-03-12', assessment_status: 'not_sent', skills: ['Python', 'ML', 'TensorFlow'] },
-  { id: '5', name: 'Jordan Lee', email: 'jordan@email.com', job_title: 'Senior Backend Engineer', composite_score: 91, stage: 'shortlisted', source: 'ziprecruiter', last_activity: '2026-03-11', assessment_status: 'completed', skills: ['Go', 'Kubernetes', 'gRPC'] },
-  { id: '6', name: 'Emma Wilson', email: 'emma@email.com', job_title: 'Frontend Engineer', composite_score: 55, stage: 'applied', source: 'indeed', last_activity: '2026-03-13', assessment_status: 'not_sent', skills: ['React', 'TypeScript'] },
-  { id: '7', name: 'Liam O\'Brien', email: 'liam@email.com', job_title: 'DevOps Engineer', composite_score: 63, stage: 'screening', source: 'direct', last_activity: '2026-03-10', assessment_status: 'pending', skills: ['Terraform', 'AWS', 'Docker'] },
-  { id: '8', name: 'Sofia Martinez', email: 'sofia@email.com', job_title: 'Head of Marketing', composite_score: 44, stage: 'rejected', source: 'indeed', last_activity: '2026-03-08', assessment_status: 'not_sent', skills: ['SEO', 'Content', 'Analytics'] },
-  { id: '9', name: 'Elena Vasquez', email: 'elena@email.com', job_title: 'Head of Marketing', composite_score: 83, stage: 'interview', source: 'linkedin', last_activity: '2026-03-14', assessment_status: 'completed', skills: ['Brand Strategy', 'Growth', 'GTM'] },
-  { id: '10', name: 'Wei Zhang', email: 'wei@email.com', job_title: 'ML Engineer', composite_score: 88, stage: 'shortlisted', source: 'linkedin', last_activity: '2026-03-15', assessment_status: 'completed', skills: ['PyTorch', 'MLOps', 'Python'] },
-  { id: '11', name: 'Isabella Romano', email: 'isabella@email.com', job_title: 'iOS Engineer', composite_score: 76, stage: 'interview', source: 'direct', last_activity: '2026-03-13', assessment_status: 'completed', skills: ['Swift', 'UIKit', 'SwiftUI'] },
-  { id: '12', name: 'Noah Thompson', email: 'noah@email.com', job_title: 'Sales Executive', composite_score: 69, stage: 'screening', source: 'linkedin', last_activity: '2026-03-12', assessment_status: 'pending', skills: ['SaaS Sales', 'Salesforce', 'Negotiation'] },
-  { id: '13', name: 'Aisha Kofi', email: 'aisha@email.com', job_title: 'Product Designer', composite_score: 82, stage: 'shortlisted', source: 'indeed', last_activity: '2026-03-14', assessment_status: 'completed', skills: ['Figma', 'Design Systems', 'Accessibility'] },
-  { id: '14', name: 'Diego Herrera', email: 'diego@email.com', job_title: 'Frontend Engineer', composite_score: 71, stage: 'screening', source: 'ziprecruiter', last_activity: '2026-03-11', assessment_status: 'pending', skills: ['Vue.js', 'CSS', 'Performance'] },
-  { id: '15', name: 'Yuki Tanaka', email: 'yuki@email.com', job_title: 'Data Scientist', composite_score: 93, stage: 'offered', source: 'linkedin', last_activity: '2026-03-15', assessment_status: 'completed', skills: ['R', 'Statistics', 'Visualization'] },
-]
+import { fetchCandidates, deriveStage, STAGE_LABELS, STAGE_ORDER } from '../lib/db'
+import { useAuth } from '../lib/auth'
 
 export default function Candidates() {
   const navigate = useNavigate()
+  const { company } = useAuth()
+
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
   const [search, setSearch] = useState('')
   const [stageFilter, setStageFilter] = useState([])
-  const [sourceFilter, setSourceFilter] = useState([])
-  const [assessmentFilter, setAssessmentFilter] = useState('')
   const [scoreRange, setScoreRange] = useState([0, 100])
-  const [sortCol, setSortCol] = useState('composite_score')
+  const [sortCol, setSortCol] = useState('applied_at')
   const [sortDir, setSortDir] = useState('desc')
   const [selected, setSelected] = useState(new Set())
   const [filterOpen, setFilterOpen] = useState(true)
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 20
 
+  useEffect(() => {
+    if (!company?.id) {
+      setLoading(false)
+      return
+    }
+    fetchCandidates(company.id)
+      .then(data => {
+        setRows(data)
+        setLoading(false)
+      })
+      .catch(err => {
+        console.error('Candidates fetch error:', err)
+        setError(err.message || 'Failed to load candidates')
+        setLoading(false)
+      })
+  }, [company?.id])
+
   const filtered = useMemo(() => {
-    let d = MOCK_CANDIDATES.filter(c => {
-      const matchSearch = !search || c.name.toLowerCase().includes(search.toLowerCase()) || c.email.toLowerCase().includes(search.toLowerCase()) || c.skills.some(s => s.toLowerCase().includes(search.toLowerCase()))
-      const matchStage = stageFilter.length === 0 || stageFilter.includes(c.stage)
-      const matchSource = sourceFilter.length === 0 || sourceFilter.includes(c.source)
-      const matchAssessment = !assessmentFilter || c.assessment_status === assessmentFilter
-      const matchScore = c.composite_score >= scoreRange[0] && c.composite_score <= scoreRange[1]
-      return matchSearch && matchStage && matchSource && matchAssessment && matchScore
+    let d = rows.filter(row => {
+      const c = row.candidates || {}
+      const fullName = c.full_name || ''
+      const email = c.email || ''
+      const skills = c.skills || []
+      const score = row.stage2_results?.total_score ?? null
+      const stage = deriveStage(row.status, row.pipeline_stage)
+
+      const matchSearch = !search
+        || fullName.toLowerCase().includes(search.toLowerCase())
+        || email.toLowerCase().includes(search.toLowerCase())
+        || skills.some(s => s.toLowerCase().includes(search.toLowerCase()))
+
+      const matchStage = stageFilter.length === 0 || stageFilter.includes(stage)
+
+      const matchScore = score === null
+        ? true
+        : score >= scoreRange[0] && score <= scoreRange[1]
+
+      return matchSearch && matchStage && matchScore
     })
+
     d.sort((a, b) => {
-      const av = a[sortCol], bv = b[sortCol]
-      if (av == null) return 1
-      if (bv == null) return -1
+      let av, bv
+      if (sortCol === 'full_name') {
+        av = a.candidates?.full_name || ''
+        bv = b.candidates?.full_name || ''
+      } else if (sortCol === 'composite_score') {
+        av = a.stage2_results?.total_score ?? -1
+        bv = b.stage2_results?.total_score ?? -1
+      } else if (sortCol === 'stage') {
+        av = deriveStage(a.status, a.pipeline_stage)
+        bv = deriveStage(b.status, b.pipeline_stage)
+      } else if (sortCol === 'applied_at') {
+        av = a.applied_at || ''
+        bv = b.applied_at || ''
+      } else {
+        av = a[sortCol] ?? ''
+        bv = b[sortCol] ?? ''
+      }
+      if (av == null || av === '') return 1
+      if (bv == null || bv === '') return -1
       const cmp = typeof av === 'string' ? av.localeCompare(bv) : av - bv
       return sortDir === 'asc' ? cmp : -cmp
     })
     return d
-  }, [search, stageFilter, sourceFilter, assessmentFilter, scoreRange, sortCol, sortDir])
+  }, [rows, search, stageFilter, scoreRange, sortCol, sortDir])
 
   const paged = filtered.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE)
   const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
@@ -76,27 +111,46 @@ export default function Candidates() {
     setSelected(s => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n })
   }
 
-  const SortIcon = ({ col }) => {
-    if (sortCol !== col) return <ChevronsUpDown size={11} color="var(--text-muted)" />
-    return sortDir === 'asc' ? <ChevronUp size={11} color="var(--accent)" /> : <ChevronDown size={11} color="var(--accent)" />
-  }
+  const activeFilterCount = stageFilter.length
 
-  const stages = ['applied', 'screening', 'interview', 'shortlisted', 'offered', 'hired', 'rejected']
-  const sources = ['linkedin', 'indeed', 'direct', 'ziprecruiter', 'other']
+  if (!company?.id) {
+    return (
+      <Layout>
+        <PageHeader title="Candidates" subtitle="No company configured" />
+        <div style={{ padding: '40px 28px', textAlign: 'center' }}>
+          <p style={{ color: 'var(--text-muted)', fontSize: 14 }}>No company is configured for your account.</p>
+        </div>
+      </Layout>
+    )
+  }
 
   return (
     <Layout>
       <PageHeader
         title="Candidates"
-        subtitle={`${MOCK_CANDIDATES.length} total · ${filtered.length} matching filters`}
+        subtitle={loading ? 'Loading…' : `${rows.length} total · ${filtered.length} matching filters`}
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
             <SearchInput value={search} onChange={setSearch} placeholder="Search name, email, skills..." width={280} />
             <button
               onClick={() => setFilterOpen(o => !o)}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '7px 12px', background: filterOpen ? 'var(--bg-tertiary)' : 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13 }}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 5,
+                padding: '7px 12px',
+                background: filterOpen ? 'var(--bg-tertiary)' : 'var(--bg-secondary)',
+                border: '1px solid var(--border)',
+                borderRadius: 6,
+                color: 'var(--text-secondary)',
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
             >
-              <Filter size={13} /> Filters {(stageFilter.length + sourceFilter.length + (assessmentFilter ? 1 : 0)) > 0 && <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '0 5px', fontSize: 10, fontWeight: 700 }}>{stageFilter.length + sourceFilter.length + (assessmentFilter ? 1 : 0)}</span>}
+              <Filter size={13} /> Filters
+              {activeFilterCount > 0 && (
+                <span style={{ background: 'var(--accent)', color: '#fff', borderRadius: 10, padding: '0 5px', fontSize: 10, fontWeight: 700 }}>
+                  {activeFilterCount}
+                </span>
+              )}
             </button>
           </div>
         }
@@ -106,35 +160,40 @@ export default function Candidates() {
         {/* Sidebar filters */}
         {filterOpen && (
           <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--border)', padding: '16px 14px', overflowY: 'auto', background: 'var(--bg-primary)' }}>
-            <FilterSection title="Stage">
-              {stages.map(s => (
-                <FilterChip key={s} label={s} active={stageFilter.includes(s)} onClick={() => toggleFilter(stageFilter, setStageFilter, s)} />
+            <FilterSection title="Pipeline Stage">
+              {STAGE_ORDER.map(key => (
+                <FilterChip
+                  key={key}
+                  label={STAGE_LABELS[key]}
+                  active={stageFilter.includes(key)}
+                  onClick={() => toggleFilter(stageFilter, setStageFilter, key)}
+                />
               ))}
             </FilterSection>
-            <FilterSection title="Source">
-              {sources.map(s => (
-                <FilterChip key={s} label={s} active={sourceFilter.includes(s)} onClick={() => toggleFilter(sourceFilter, setSourceFilter, s)} />
-              ))}
-            </FilterSection>
-            <FilterSection title="Assessment">
-              {[['', 'All'], ['completed', 'Completed'], ['pending', 'Pending'], ['not_sent', 'Not Sent']].map(([val, lbl]) => (
-                <FilterChip key={val} label={lbl} active={assessmentFilter === val} onClick={() => setAssessmentFilter(val)} />
-              ))}
-            </FilterSection>
+
             <FilterSection title="Score Range">
-              <div style={{ padding: '4px 0' }}>
+              <div style={{ padding: '4px 0', width: '100%' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>{scoreRange[0]}</span>
                   <span style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'Geist Mono, monospace' }}>{scoreRange[1]}</span>
                 </div>
-                <input type="range" min={0} max={100} value={scoreRange[0]} onChange={e => setScoreRange([+e.target.value, scoreRange[1]])} style={{ width: '100%', marginBottom: 4, background: 'transparent' }} />
-                <input type="range" min={0} max={100} value={scoreRange[1]} onChange={e => setScoreRange([scoreRange[0], +e.target.value])} style={{ width: '100%', background: 'transparent' }} />
+                <input
+                  type="range" min={0} max={100} value={scoreRange[0]}
+                  onChange={e => setScoreRange([+e.target.value, scoreRange[1]])}
+                  style={{ width: '100%', marginBottom: 4, background: 'transparent' }}
+                />
+                <input
+                  type="range" min={0} max={100} value={scoreRange[1]}
+                  onChange={e => setScoreRange([scoreRange[0], +e.target.value])}
+                  style={{ width: '100%', background: 'transparent' }}
+                />
               </div>
             </FilterSection>
-            {(stageFilter.length + sourceFilter.length + (assessmentFilter ? 1 : 0)) > 0 && (
+
+            {activeFilterCount > 0 && (
               <button
-                onClick={() => { setStageFilter([]); setSourceFilter([]); setAssessmentFilter(''); setScoreRange([0, 100]) }}
-                style={{ width: '100%', padding: '7px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--danger)', fontSize: 12, marginTop: 8 }}
+                onClick={() => { setStageFilter([]); setScoreRange([0, 100]) }}
+                style={{ width: '100%', padding: '7px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--danger)', fontSize: 12, marginTop: 8, cursor: 'pointer' }}
               >
                 Clear all filters
               </button>
@@ -144,107 +203,160 @@ export default function Candidates() {
 
         {/* Table */}
         <div style={{ flex: 1, overflowY: 'auto', overflowX: 'auto' }}>
-          {selected.size > 0 && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'rgba(129,140,248,0.08)', borderBottom: '1px solid rgba(129,140,248,0.2)' }}>
-              <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>{selected.size} selected</span>
-              <button style={{ padding: '4px 10px', background: 'var(--success)', color: '#fff', borderRadius: 5, fontSize: 12 }}>Shortlist</button>
-              <button style={{ padding: '4px 10px', background: 'var(--danger)', color: '#fff', borderRadius: 5, fontSize: 12 }}>Reject</button>
-              <button style={{ padding: '4px 10px', background: 'var(--accent)', color: '#fff', borderRadius: 5, fontSize: 12 }}>Send Assessment</button>
-              <button onClick={() => setSelected(new Set())} style={{ marginLeft: 'auto', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-                <X size={12} /> Clear
-              </button>
+          {loading ? (
+            <SkeletonTable />
+          ) : error ? (
+            <div style={{ padding: '40px', textAlign: 'center' }}>
+              <p style={{ color: 'var(--danger)', fontSize: 14 }}>{error}</p>
             </div>
-          )}
-
-          <table>
-            <thead>
-              <tr>
-                <th style={{ width: 40 }}>
-                  <input type="checkbox" style={{ width: 14, height: 14 }} onChange={() => {
-                    if (selected.size === paged.length) setSelected(new Set())
-                    else setSelected(new Set(paged.map(c => c.id)))
-                  }} checked={paged.length > 0 && selected.size === paged.length} />
-                </th>
-                <SortTh col="name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <SortTh col="job_title" label="Applied For" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <SortTh col="composite_score" label="Score" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <SortTh col="stage" label="Stage" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <SortTh col="source" label="Source" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <th>Assessment</th>
-                <SortTh col="last_activity" label="Last Activity" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-                <th style={{ width: 60 }}>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {paged.length === 0 ? (
-                <tr>
-                  <td colSpan={9} style={{ border: 'none', padding: 0 }}>
-                    <EmptyState icon={Users} title="No candidates found" description="Adjust your filters or wait for new applications." />
-                  </td>
-                </tr>
-              ) : (
-                paged.map(c => (
-                  <tr key={c.id} style={{ cursor: 'pointer' }} onClick={() => navigate(`/candidates/${c.id}`)}>
-                    <td onClick={e => { e.stopPropagation(); toggleSelect(c.id) }}>
-                      <input type="checkbox" checked={selected.has(c.id)} onChange={() => {}} style={{ width: 14, height: 14 }} />
-                    </td>
-                    <td>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <div style={{ width: 28, height: 28, borderRadius: 7, background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0 }}>
-                          {c.name.split(' ').map(n => n[0]).join('')}
-                        </div>
-                        <div>
-                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{c.name}</div>
-                          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{c.email}</div>
-                        </div>
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 12, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.job_title}</td>
-                    <td style={{ minWidth: 110 }}>
-                      <ScoreBar score={c.composite_score} height={4} />
-                    </td>
-                    <td><Badge status={c.stage} /></td>
-                    <td><Badge status={c.source} size="xs" /></td>
-                    <td>
-                      <Badge
-                        label={c.assessment_status === 'not_sent' ? 'Not Sent' : c.assessment_status}
-                        variant={c.assessment_status === 'completed' ? 'success' : c.assessment_status === 'pending' ? 'warning' : 'default'}
-                        size="xs"
-                      />
-                    </td>
-                    <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
-                      {format(new Date(c.last_activity), 'MMM d')}
-                    </td>
-                    <td onClick={e => e.stopPropagation()}>
-                      <button
-                        onClick={() => navigate(`/candidates/${c.id}`)}
-                        style={{ padding: '3px 8px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-muted)', fontSize: 11 }}
-                        onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-tertiary)'; e.currentTarget.style.color = 'var(--text-primary)' }}
-                        onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
-                      >
-                        View
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
-              </span>
-              <div style={{ display: 'flex', gap: 4 }}>
-                {Array.from({ length: totalPages }).map((_, i) => (
-                  <button key={i} onClick={() => setPage(i)} style={{ width: 28, height: 28, borderRadius: 5, background: i === page ? 'var(--accent)' : 'transparent', border: '1px solid', borderColor: i === page ? 'var(--accent)' : 'var(--border)', color: i === page ? '#fff' : 'var(--text-muted)', fontSize: 12 }}>
-                    {i + 1}
+          ) : (
+            <>
+              {selected.size > 0 && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'rgba(129,140,248,0.08)', borderBottom: '1px solid rgba(129,140,248,0.2)' }}>
+                  <span style={{ fontSize: 13, color: 'var(--accent)', fontWeight: 600 }}>{selected.size} selected</span>
+                  <button onClick={() => setSelected(new Set())} style={{ marginLeft: 'auto', background: 'transparent', color: 'var(--text-muted)', fontSize: 12, display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer', border: 'none' }}>
+                    <X size={12} /> Clear
                   </button>
-                ))}
-              </div>
-            </div>
+                </div>
+              )}
+
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 40 }}>
+                      <input
+                        type="checkbox"
+                        style={{ width: 14, height: 14 }}
+                        onChange={() => {
+                          if (selected.size === paged.length) setSelected(new Set())
+                          else setSelected(new Set(paged.map(r => r.application_id)))
+                        }}
+                        checked={paged.length > 0 && selected.size === paged.length}
+                      />
+                    </th>
+                    <SortTh col="full_name" label="Name" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
+                    <SortTh col="job_title" label="Applied For" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
+                    <SortTh col="composite_score" label="Score" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
+                    <SortTh col="stage" label="Stage" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
+                    <th>Seniority</th>
+                    <SortTh col="applied_at" label="Applied" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
+                    <th style={{ width: 60 }}>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {paged.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} style={{ border: 'none', padding: 0 }}>
+                        <EmptyState
+                          icon={Users}
+                          title="No candidates found"
+                          description={rows.length === 0
+                            ? 'No applications have been submitted yet.'
+                            : 'Adjust your filters to see more candidates.'}
+                        />
+                      </td>
+                    </tr>
+                  ) : (
+                    paged.map(row => {
+                      const c = row.candidates || {}
+                      const appId = row.application_id
+                      const fullName = c.full_name || '—'
+                      const email = c.email || ''
+                      const skills = c.skills || []
+                      const seniority = c.seniority_level || '—'
+                      const score = row.stage2_results?.total_score ?? null
+                      const stage = deriveStage(row.status, row.pipeline_stage)
+                      const stageLabel = STAGE_LABELS[stage] || stage
+                      const jobTitle = row.jobs?.title || '—'
+                      const appliedAt = row.applied_at
+
+                      return (
+                        <tr key={appId} style={{ cursor: 'pointer' }} onClick={() => navigate(`/candidates/${appId}`)}>
+                          <td onClick={e => { e.stopPropagation(); toggleSelect(appId) }}>
+                            <input type="checkbox" checked={selected.has(appId)} onChange={() => {}} style={{ width: 14, height: 14 }} />
+                          </td>
+                          <td>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              <div style={{
+                                width: 28, height: 28, borderRadius: 7,
+                                background: 'linear-gradient(135deg, var(--accent), var(--accent-hover))',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: 10, fontWeight: 700, color: '#fff', flexShrink: 0,
+                              }}>
+                                {fullName.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase()}
+                              </div>
+                              <div>
+                                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{fullName}</div>
+                                <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{email}</div>
+                              </div>
+                            </div>
+                          </td>
+                          <td style={{ fontSize: 12, maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                            {jobTitle}
+                          </td>
+                          <td style={{ minWidth: 110 }}>
+                            {score !== null
+                              ? <ScoreBar score={score} height={4} />
+                              : <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>—</span>
+                            }
+                          </td>
+                          <td>
+                            <Badge label={stageLabel} status={stage} />
+                          </td>
+                          <td>
+                            <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{seniority}</span>
+                          </td>
+                          <td style={{ fontSize: 12, fontFamily: 'Geist Mono, monospace' }}>
+                            {appliedAt ? format(new Date(appliedAt), 'MMM d') : '—'}
+                          </td>
+                          <td onClick={e => e.stopPropagation()}>
+                            <button
+                              onClick={() => navigate(`/candidates/${appId}`)}
+                              style={{
+                                padding: '3px 8px', background: 'transparent',
+                                border: '1px solid var(--border)', borderRadius: 4,
+                                color: 'var(--text-muted)', fontSize: 11, cursor: 'pointer',
+                              }}
+                              onMouseEnter={e => { e.currentTarget.style.background = 'var(--bg-tertiary)'; e.currentTarget.style.color = 'var(--text-primary)' }}
+                              onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'var(--text-muted)' }}
+                            >
+                              View
+                            </button>
+                          </td>
+                        </tr>
+                      )
+                    })
+                  )}
+                </tbody>
+              </table>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', borderTop: '1px solid var(--border)' }}>
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                    {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filtered.length)} of {filtered.length}
+                  </span>
+                  <div style={{ display: 'flex', gap: 4 }}>
+                    {Array.from({ length: totalPages }).map((_, i) => (
+                      <button
+                        key={i}
+                        onClick={() => setPage(i)}
+                        style={{
+                          width: 28, height: 28, borderRadius: 5,
+                          background: i === page ? 'var(--accent)' : 'transparent',
+                          border: '1px solid',
+                          borderColor: i === page ? 'var(--accent)' : 'var(--border)',
+                          color: i === page ? '#fff' : 'var(--text-muted)',
+                          fontSize: 12, cursor: 'pointer',
+                        }}
+                      >
+                        {i + 1}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </div>
       </div>
@@ -289,7 +401,6 @@ function FilterChip({ label, active, onClick }) {
         background: active ? 'rgba(129,140,248,0.15)' : 'var(--bg-secondary)',
         border: `1px solid ${active ? 'rgba(129,140,248,0.4)' : 'var(--border)'}`,
         color: active ? 'var(--accent)' : 'var(--text-secondary)',
-        textTransform: 'capitalize',
         cursor: 'pointer',
         transition: 'all 0.1s',
       }}

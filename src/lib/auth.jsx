@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { supabase, authHelpers } from './supabase'
-import { getMe, apiSignup } from './api'
+import { supabase } from './supabase'
 
 const AuthContext = createContext(null)
 
@@ -12,12 +11,11 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession()
       .then(({ data: { session } }) => {
         setUser(session?.user ?? null)
         if (session?.user) {
-          loadProfile().catch(console.error)
+          loadProfile(session.user.id).catch(console.error)
         } else {
           setLoading(false)
         }
@@ -27,16 +25,14 @@ export function AuthProvider({ children }) {
         setLoading(false)
       })
 
-    // Listen for auth changes
     // NOTE: Do NOT call supabase.auth.getSession() synchronously inside this callback.
     // Supabase SDK v2.x holds an exclusive Web Lock while firing onAuthStateChange, so
-    // calling getSession() (which also acquires that lock) causes a deadlock — the app
-    // freezes on "Signing in..." indefinitely. setTimeout(0) defers the call until
-    // after the lock is released.
+    // calling getSession() (which also acquires that lock) causes a deadlock.
+    // setTimeout(0) defers the call until after the lock is released.
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        setTimeout(() => loadProfile().catch(console.error), 0)
+        setTimeout(() => loadProfile(session.user.id).catch(console.error), 0)
       } else {
         setProfile(null)
         setCompany(null)
@@ -47,15 +43,16 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  async function loadProfile() {
+  async function loadProfile(userId) {
     try {
-      const data = await getMe()
-      // Pipeline returns { status: "ok", data: { user_id, email, recruiter_profile, company_id } }
-      const payload = data?.data || data
-      setProfile(payload?.recruiter_profile || payload?.profile || null)
-      setCompany(payload?.company_id ? { id: payload.company_id } : null)
+      const { data: prof } = await supabase
+        .from('recruiter_profiles')
+        .select('*')
+        .eq('id', userId)
+        .maybeSingle()
+      setProfile(prof || null)
+      setCompany(prof?.company_id ? { id: prof.company_id, name: prof.company_name } : null)
     } catch (err) {
-      // Profile might not exist yet — that's okay
       console.warn('Profile not found:', err.message)
     } finally {
       setLoading(false)
@@ -63,20 +60,23 @@ export function AuthProvider({ children }) {
   }
 
   async function signIn(email, password) {
-    const data = await authHelpers.signIn(email, password)
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+    if (error) throw error
     return data
   }
 
   async function signUp(email, password, metadata = {}) {
-    // Use Supabase client for auth, then the pipeline creates profile + company
-    const data = await authHelpers.signUp(email, password, metadata)
-    // Note: pipeline's /api/auth/signup creates company + profile in one call
-    // but we use Supabase client-side auth so the session is set locally
+    const { data, error } = await supabase.auth.signUp({
+      email,
+      password,
+      options: { data: metadata },
+    })
+    if (error) throw error
     return data
   }
 
   async function signOut() {
-    await authHelpers.signOut()
+    await supabase.auth.signOut()
     setUser(null)
     setProfile(null)
     setCompany(null)
