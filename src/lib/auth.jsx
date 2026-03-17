@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase, authHelpers } from './supabase'
-import { createCompany, createProfile, getProfile } from './api'
+import { getMe, apiSignup } from './api'
 
 const AuthContext = createContext(null)
 
@@ -13,20 +13,25 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null)
-      if (session?.user) {
-        loadProfile(session.user.id).catch(console.error)
-      } else {
+    supabase.auth.getSession()
+      .then(({ data: { session } }) => {
+        setUser(session?.user ?? null)
+        if (session?.user) {
+          loadProfile().catch(console.error)
+        } else {
+          setLoading(false)
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to get session:', err)
         setLoading(false)
-      }
-    })
+      })
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       setUser(session?.user ?? null)
       if (session?.user) {
-        await loadProfile(session.user.id).catch(console.error)
+        await loadProfile().catch(console.error)
       } else {
         setProfile(null)
         setCompany(null)
@@ -37,13 +42,15 @@ export function AuthProvider({ children }) {
     return () => subscription.unsubscribe()
   }, [])
 
-  async function loadProfile(userId) {
+  async function loadProfile() {
     try {
-      const data = await getProfile(userId)
-      setProfile(data.profile || data)
-      setCompany(data.company || null)
+      const data = await getMe()
+      // Pipeline returns { status: "ok", data: { user_id, email, recruiter_profile, company_id } }
+      const payload = data?.data || data
+      setProfile(payload?.recruiter_profile || payload?.profile || null)
+      setCompany(payload?.company_id ? { id: payload.company_id } : null)
     } catch (err) {
-      // Profile might not exist yet
+      // Profile might not exist yet — that's okay
       console.warn('Profile not found:', err.message)
     } finally {
       setLoading(false)
@@ -56,25 +63,10 @@ export function AuthProvider({ children }) {
   }
 
   async function signUp(email, password, metadata = {}) {
+    // Use Supabase client for auth, then the pipeline creates profile + company
     const data = await authHelpers.signUp(email, password, metadata)
-    if (data.user) {
-      try {
-        // Create company first
-        const companyData = await createCompany({
-          name: metadata.company_name || 'My Company',
-          recruiter_user_id: data.user.id,
-        })
-        // Create recruiter profile
-        await createProfile({
-          user_id: data.user.id,
-          full_name: metadata.full_name || '',
-          email,
-          company_id: companyData.id,
-        })
-      } catch (err) {
-        console.warn('Could not create profile/company:', err.message)
-      }
-    }
+    // Note: pipeline's /api/auth/signup creates company + profile in one call
+    // but we use Supabase client-side auth so the session is set locally
     return data
   }
 
@@ -85,7 +77,7 @@ export function AuthProvider({ children }) {
     setCompany(null)
   }
 
-  const value = { user, profile, company, loading, signIn, signUp, signOut }
+  const value = { user, profile, company, loading, signIn, signUp, signOut, loadProfile }
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>
 }
 
