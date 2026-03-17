@@ -139,3 +139,7 @@ export const updateEmailTemplate = (id, data) => patch(`/email-templates/${id}`,
 // ─── Notes ────────────────────────────────────────────────────
 export const addNote = (applicationId, content) => post(`/applications/${applicationId}/notes`, { content })
 export const getNotes = (applicationId) => get(`/applications/${applicationId}/notes`)
+
+// ─── Facial Analysis ─────────────────────────────────────────
+export const getFacialAnalysis = (interviewId) => get(`/facial-analysis/${interviewId}`)
+export const triggerFacialAnalysis = (interviewId) => post(`/facial-analysis/${interviewId}/analyze`)
